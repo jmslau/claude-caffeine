@@ -4,10 +4,20 @@ set -euo pipefail
 # Release script for ClaudeCaffeine
 # Usage: ./scripts/release.sh <version>
 # Example: ./scripts/release.sh 1.0.0
+#
+# This script handles the full release lifecycle:
+#   1. Build release binary and app bundle
+#   2. Create zip archive and compute SHA256
+#   3. Update cask formula with new version and hash
+#   4. Commit, tag, and push to source repo
+#   5. Create GitHub Release with zip attached
+#   6. Update homebrew-tap repo with new cask formula
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CASK_FILE="$PROJECT_DIR/Casks/claude-caffeine.rb"
+TAP_REPO="jmslau/homebrew-tap"
+SOURCE_REPO="jmslau/claude-caffeine"
 
 # --- Validate arguments ---
 
@@ -24,11 +34,40 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-echo "==> Building ClaudeCaffeine v${VERSION}"
+# --- Preflight checks ---
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "Error: GitHub CLI (gh) is required. Install with: brew install gh"
+  exit 1
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  echo "Error: Not authenticated with GitHub CLI. Run: gh auth login"
+  exit 1
+fi
+
+cd "$PROJECT_DIR"
+
+if [ -n "$(git status --porcelain -- ':!Casks/')" ]; then
+  echo "Error: Working tree has uncommitted changes (outside Casks/). Commit or stash first."
+  exit 1
+fi
+
+if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+  echo "Error: Tag v${VERSION} already exists"
+  exit 1
+fi
+
+echo "==> Releasing ClaudeCaffeine v${VERSION}"
+
+# --- Run tests ---
+
+echo "==> Running tests"
+swift test --quiet
 
 # --- Build release binary ---
 
-cd "$PROJECT_DIR"
+echo "==> Building release binary"
 swift build -c release
 
 # --- Create app bundle ---
@@ -50,7 +89,7 @@ cd "$PROJECT_DIR"
 # --- Compute SHA256 ---
 
 SHA256=$(shasum -a 256 "$ZIP_PATH" | awk '{ print $1 }')
-echo "==> SHA256: $SHA256"
+echo "    SHA256: $SHA256"
 
 # --- Update cask formula ---
 
@@ -58,21 +97,49 @@ echo "==> Updating cask formula"
 sed -i '' "s/version \".*\"/version \"${VERSION}\"/" "$CASK_FILE"
 sed -i '' "s/sha256 \".*\"/sha256 \"${SHA256}\"/" "$CASK_FILE"
 
+# --- Commit and tag ---
+
+echo "==> Committing and tagging"
+git add Casks/claude-caffeine.rb
+git commit -m "chore: release v${VERSION}" --allow-empty
+git tag "v${VERSION}"
+
+# --- Push ---
+
+echo "==> Pushing to origin"
+git push origin main "v${VERSION}"
+
+# --- Create GitHub Release ---
+
+echo "==> Creating GitHub Release"
+gh release create "v${VERSION}" "$ZIP_PATH" \
+  --repo "$SOURCE_REPO" \
+  --title "v${VERSION}" \
+  --notes "ClaudeCaffeine v${VERSION}
+
+Install:
+\`\`\`
+brew install --cask jmslau/tap/claude-caffeine
+\`\`\`
+
+Or download \`ClaudeCaffeine.app.zip\` below."
+
+# --- Update homebrew-tap ---
+
+echo "==> Updating homebrew-tap"
+TAP_DIR=$(mktemp -d)
+trap 'rm -rf "$TAP_DIR"' EXIT
+git clone --depth 1 "https://github.com/${TAP_REPO}.git" "$TAP_DIR"
+cp "$CASK_FILE" "$TAP_DIR/Casks/claude-caffeine.rb"
+cd "$TAP_DIR"
+git add Casks/claude-caffeine.rb
+git commit -m "chore: update claude-caffeine to v${VERSION}"
+git push
+cd "$PROJECT_DIR"
+
 echo ""
-echo "==> Release v${VERSION} prepared successfully"
+echo "==> Released ClaudeCaffeine v${VERSION}"
+echo "    https://github.com/${SOURCE_REPO}/releases/tag/v${VERSION}"
 echo ""
-echo "Artifacts:"
-echo "  $ZIP_PATH"
-echo "  $CASK_FILE"
-echo ""
-echo "Next steps:"
-echo "  1. Commit the updated cask formula"
-echo "  2. Create a GitHub release:"
-echo ""
-echo "     git tag v${VERSION}"
-echo "     git push origin v${VERSION}"
-echo "     gh release create v${VERSION} '$ZIP_PATH' \\"
-echo "       --title 'v${VERSION}' \\"
-echo "       --notes 'ClaudeCaffeine v${VERSION}'"
-echo ""
-echo "  3. To publish the cask, submit the formula to a Homebrew tap"
+echo "    Users can install with:"
+echo "    brew install --cask jmslau/tap/claude-caffeine"
