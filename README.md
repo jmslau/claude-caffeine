@@ -4,6 +4,8 @@
 
 ClaudeCaffeine is a lightweight macOS menu bar app that detects active Claude Code sessions and prevents sleep. When Claude goes idle, your Mac sleeps normally again.
 
+**Quick setup:** `brew install --cask jmslau/tap/claude-caffeine && open /Applications/ClaudeCaffeine.app`
+
 ## Install
 
 ```bash
