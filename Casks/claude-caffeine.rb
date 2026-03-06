@@ -1,6 +1,6 @@
 cask "claude-caffeine" do
-  version "1.0.0"
-  sha256 "89b7c2213b41a2efc1deae19c1d9342988ae430b10e8c9718804bec89bb6638a"
+  version "1.1.0"
+  sha256 "4bf82e3602abc6e0add528d3575d39fe07c887fcdcb18ae8b3acb06784f313c1"
 
   url "https://github.com/jmslau/claude-caffeine/releases/download/v#{version}/ClaudeCaffeine.app.zip",
       verified: "github.com/jmslau/claude-caffeine/"
