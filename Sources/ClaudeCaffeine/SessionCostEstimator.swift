@@ -32,15 +32,25 @@ struct SessionCost: Sendable, Equatable {
     let lastMessageAt: Date?
 }
 
-struct CostSnapshot: Sendable {
-    let activeSessions: [SessionCost]
+struct ProjectCost: Sendable {
+    let projectName: String
     let todayCost: Double
     let weekCost: Double
     let todaySessions: Int
     let weekSessions: Int
 }
 
-struct SessionCostEstimator: Sendable {
+struct CostSnapshot: Sendable {
+    let activeSessions: [SessionCost]
+    let todayCost: Double
+    let weekCost: Double
+    let todaySessions: Int
+    let weekSessions: Int
+    let projectCosts: [ProjectCost]
+}
+
+@MainActor
+final class SessionCostEstimator {
     private static let pricing: [String: ModelPricing] = [
         "claude-opus-4-6": ModelPricing(
             inputPerMillion: 15.0, outputPerMillion: 75.0,
@@ -63,6 +73,14 @@ struct SessionCostEstimator: Sendable {
 
     let projectsRootURL: URL
 
+    /// Cache of parsed sessions keyed by file path, with the modification date used to invalidate.
+    private var cache: [String: CachedSession] = [:]
+
+    private struct CachedSession {
+        let modificationDate: Date
+        let sessionCost: SessionCost
+    }
+
     init(
         projectsRootURL: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects")
@@ -75,15 +93,32 @@ struct SessionCostEstimator: Sendable {
         let startOfToday = calendar.startOfDay(for: now)
         let startOfWeek = calendar.date(byAdding: .day, value: -7, to: startOfToday) ?? startOfToday
 
-        let sessionFiles = findSessionFiles()
+        let sessionFiles = findSessionFiles(modifiedAfter: startOfWeek)
         var activeSessions: [SessionCost] = []
         var todayCost = 0.0
         var weekCost = 0.0
         var todaySessions = 0
         var weekSessions = 0
 
-        for (projectPath, fileURL) in sessionFiles {
-            guard let sessionCost = parseSession(fileURL: fileURL, projectPath: projectPath) else {
+        var projectTodayCosts: [String: Double] = [:]
+        var projectWeekCosts: [String: Double] = [:]
+        var projectTodaySessionCounts: [String: Int] = [:]
+        var projectWeekSessionCounts: [String: Int] = [:]
+
+        // Track which cache keys are still valid this pass
+        var activeCacheKeys: Set<String> = []
+
+        for (projectPath, fileURL, modDate) in sessionFiles {
+            let cacheKey = fileURL.path
+            activeCacheKeys.insert(cacheKey)
+
+            let sessionCost: SessionCost
+            if let cached = cache[cacheKey], cached.modificationDate == modDate {
+                sessionCost = cached.sessionCost
+            } else if let parsed = Self.parseSession(fileURL: fileURL, projectPath: projectPath) {
+                cache[cacheKey] = CachedSession(modificationDate: modDate, sessionCost: parsed)
+                sessionCost = parsed
+            } else {
                 continue
             }
 
@@ -94,26 +129,50 @@ struct SessionCostEstimator: Sendable {
                 todayCost += sessionCost.totalCost
                 todaySessions += 1
                 activeSessions.append(sessionCost)
+                projectTodayCosts[projectPath, default: 0] += sessionCost.totalCost
+                projectTodaySessionCounts[projectPath, default: 0] += 1
+                projectWeekCosts[projectPath, default: 0] += sessionCost.totalCost
+                projectWeekSessionCounts[projectPath, default: 0] += 1
             } else if isThisWeek {
                 weekCost += sessionCost.totalCost
                 weekSessions += 1
+                projectWeekCosts[projectPath, default: 0] += sessionCost.totalCost
+                projectWeekSessionCounts[projectPath, default: 0] += 1
             }
         }
 
+        // Evict deleted or now-stale files from cache
+        let staleKeys = cache.keys.filter { !activeCacheKeys.contains($0) }
+        for key in staleKeys {
+            cache.removeValue(forKey: key)
+        }
+
         activeSessions.sort { ($0.lastMessageAt ?? .distantPast) > ($1.lastMessageAt ?? .distantPast) }
+
+        let allProjectPaths = Set(projectTodayCosts.keys).union(projectWeekCosts.keys)
+        let projectCosts = allProjectPaths.map { path in
+            ProjectCost(
+                projectName: path,
+                todayCost: projectTodayCosts[path, default: 0],
+                weekCost: projectWeekCosts[path, default: 0],
+                todaySessions: projectTodaySessionCounts[path, default: 0],
+                weekSessions: projectWeekSessionCounts[path, default: 0]
+            )
+        }.sorted { $0.todayCost > $1.todayCost }
 
         return CostSnapshot(
             activeSessions: activeSessions,
             todayCost: todayCost,
             weekCost: weekCost + todayCost,
             todaySessions: todaySessions,
-            weekSessions: weekSessions + todaySessions
+            weekSessions: weekSessions + todaySessions,
+            projectCosts: projectCosts
         )
     }
 
     // MARK: - Private
 
-    private func findSessionFiles() -> [(projectPath: String, fileURL: URL)] {
+    private func findSessionFiles(modifiedAfter cutoff: Date) -> [(projectPath: String, fileURL: URL, modDate: Date)] {
         let fileManager = FileManager.default
         guard let projectDirs = try? fileManager.contentsOfDirectory(
             at: projectsRootURL,
@@ -123,7 +182,7 @@ struct SessionCostEstimator: Sendable {
             return []
         }
 
-        var results: [(String, URL)] = []
+        var results: [(String, URL, Date)] = []
         for dir in projectDirs {
             guard let isDir = try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
                   isDir else { continue }
@@ -135,13 +194,17 @@ struct SessionCostEstimator: Sendable {
             ) else { continue }
 
             for file in files where file.pathExtension == "jsonl" {
-                results.append((dir.lastPathComponent, file))
+                guard let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+                    continue
+                }
+                guard modDate >= cutoff else { continue }
+                results.append((dir.lastPathComponent, file, modDate))
             }
         }
         return results
     }
 
-    private func parseSession(fileURL: URL, projectPath: String) -> SessionCost? {
+    private static func parseSession(fileURL: URL, projectPath: String) -> SessionCost? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
         guard let content = String(data: data, encoding: .utf8) else { return nil }
 
@@ -150,8 +213,9 @@ struct SessionCostEstimator: Sendable {
         var totalOutput = 0
         var totalCacheCreation = 0
         var totalCacheRead = 0
+        var totalCost = 0.0
         var messageCount = 0
-        var model = ""
+        var modelCounts: [String: Int] = [:]
         var firstTimestamp: Date?
         var lastTimestamp: Date?
 
@@ -168,14 +232,26 @@ struct SessionCostEstimator: Sendable {
 
             messageCount += 1
 
-            if let m = message["model"] as? String, !m.isEmpty {
-                model = m
+            let msgModel = (message["model"] as? String) ?? ""
+            if !msgModel.isEmpty {
+                modelCounts[msgModel, default: 0] += 1
             }
 
-            totalInput += usage["input_tokens"] as? Int ?? 0
-            totalOutput += usage["output_tokens"] as? Int ?? 0
-            totalCacheCreation += usage["cache_creation_input_tokens"] as? Int ?? 0
-            totalCacheRead += usage["cache_read_input_tokens"] as? Int ?? 0
+            let input = usage["input_tokens"] as? Int ?? 0
+            let output = usage["output_tokens"] as? Int ?? 0
+            let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
+            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
+
+            totalInput += input
+            totalOutput += output
+            totalCacheCreation += cacheCreation
+            totalCacheRead += cacheRead
+
+            let msgUsage = TokenUsage(
+                inputTokens: input, outputTokens: output,
+                cacheCreationTokens: cacheCreation, cacheReadTokens: cacheRead
+            )
+            totalCost += pricingForModel(msgModel).cost(for: msgUsage)
 
             if let ts = obj["timestamp"] as? String, let date = parseISO8601(ts) {
                 if firstTimestamp == nil { firstTimestamp = date }
@@ -192,13 +268,12 @@ struct SessionCostEstimator: Sendable {
             cacheReadTokens: totalCacheRead
         )
 
-        let pricing = Self.pricingForModel(model)
-        let cost = pricing.cost(for: tokenUsage)
+        let model = modelCounts.max(by: { $0.value < $1.value })?.key ?? ""
 
         return SessionCost(
             sessionID: sessionID,
             projectPath: projectPath,
-            totalCost: cost,
+            totalCost: totalCost,
             totalUsage: tokenUsage,
             model: model,
             messageCount: messageCount,
@@ -217,7 +292,14 @@ struct SessionCostEstimator: Sendable {
         return fallbackPricing
     }
 
-    private func parseISO8601(_ string: String) -> Date? {
-        ISO8601DateFormatter().date(from: string)
+    private static func parseISO8601(_ string: String) -> Date? {
+        let stripped: String
+        if let dotIndex = string.firstIndex(of: "."),
+           let zIndex = string.firstIndex(of: "Z"), dotIndex < zIndex {
+            stripped = String(string[string.startIndex..<dotIndex]) + String(string[zIndex...])
+        } else {
+            stripped = string
+        }
+        return ISO8601DateFormatter().date(from: stripped)
     }
 }

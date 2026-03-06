@@ -96,7 +96,8 @@ final class OvernightMode {
     }
 
     func sendSummaryNotification(summary: OvernightSummary, reason: String = "stopped") {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil,
+              Bundle.main.bundlePath.hasSuffix(".app") else { return }
         let duration = durationFormatter.string(from: summary.duration) ?? "0m"
         let active = durationFormatter.string(from: summary.activeTime) ?? "0m"
         let idle = durationFormatter.string(from: summary.idleTime) ?? "0m"

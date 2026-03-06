@@ -60,7 +60,6 @@ Both signals must go quiet before the sleep lock is released.
 | **bolt** (animated) | Claude is working — Mac is being kept awake, with elapsed timer |
 | **lock.laptop** | Closed-lid mode enabled |
 | **moon.zzz** | Idle — no active Claude Code sessions |
-| **pause** | Monitoring paused |
 | **warning** | Scan issue — holding lock during grace period |
 
 The menu shows live status: process state, active sessions, closed-lid state, session cost for today/week, and last check time.
@@ -88,7 +87,9 @@ The app parses Claude Code's session logs (`~/.claude/projects/`) to estimate AP
 - **Cost today** with session count
 - **Cost this week** (rolling 7 days)
 
-Pricing covers Opus, Sonnet, and Haiku model families including cache read/write tokens. Costs refresh every 30 seconds.
+Pricing covers Opus, Sonnet, and Haiku model families including cache read/write tokens. Each message is costed using its own model, so sessions that mix models (e.g., Opus with Haiku subagents) get accurate per-model pricing. Costs refresh every 30 seconds.
+
+> **Note:** Cost estimates use Anthropic's pay-per-token API rates. If you're on a Claude Pro or Max subscription plan, the displayed costs won't reflect your actual billing.
 
 ## Overnight Mode
 

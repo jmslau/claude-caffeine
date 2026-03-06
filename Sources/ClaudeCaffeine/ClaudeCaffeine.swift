@@ -42,13 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let overnightMode = OvernightMode()
     private let costEstimator = SessionCostEstimator()
 
-    private let idleThresholds: [TimeInterval] = [60, 120, 300, 600]
+    /// How long a session can be idle before we release the sleep assertion.
+    private let idleThreshold: TimeInterval = 60
     private let monitorFailureGracePeriod: TimeInterval = 30
-    private var idleThreshold: TimeInterval = 120
-    private var monitoringEnabled = true
     private var closedLidEnabled = true
     private var lowBatteryNotified = false
-    private var preOvernightMonitoring = true
     private var preOvernightClosedLid = true
 
     private var statusItem: NSStatusItem?
@@ -57,11 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionsLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var closedLidLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var lastCheckLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private var monitoringToggleItem = NSMenuItem(
-        title: "Pause Monitoring",
-        action: #selector(toggleMonitoring),
-        keyEquivalent: ""
-    )
     private var closedLidToggleItem = NSMenuItem(
         title: "Enable Closed-Lid Mode",
         action: #selector(toggleClosedLid),
@@ -95,7 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overnightStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var costLineItem = NSMenuItem(title: "Cost: --", action: nil, keyEquivalent: "")
     private var costDetailLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private var thresholdItems: [NSMenuItem] = []
+    private var costByProjectItem = NSMenuItem(title: "Cost by Project", action: nil, keyEquivalent: "")
+    private var costByProjectMenu = NSMenu()
     private var pollTimer: Timer?
     private var pollTask: Task<Void, Never>?
     private var isPollInFlight = false
@@ -141,20 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc
-    private func toggleMonitoring() {
-        monitoringEnabled.toggle()
-        monitoringToggleItem.title = monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring"
-        refresh()
-    }
-
-    @objc
     private func handlePollTimer() {
-        refresh()
-    }
-
-    @objc
-    private func setIdleThreshold(_ sender: NSMenuItem) {
-        idleThreshold = sender.representedObject as? TimeInterval ?? idleThreshold
         refresh()
     }
 
@@ -198,14 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if overnightMode.isEnabled {
             let summary = overnightMode.stop()
             overnightMode.sendSummaryNotification(summary: summary, reason: "manually stopped")
-            monitoringEnabled = preOvernightMonitoring
             closedLidEnabled = preOvernightClosedLid
-            monitoringToggleItem.title = monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring"
         } else {
-            preOvernightMonitoring = monitoringEnabled
             preOvernightClosedLid = closedLidEnabled
-            monitoringEnabled = true
-            monitoringToggleItem.title = "Pause Monitoring"
             if HelperInstaller.isInstalled {
                 closedLidEnabled = true
             }
@@ -278,20 +254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         costDetailLineItem.isHidden = true
         menu.addItem(costLineItem)
         menu.addItem(costDetailLineItem)
+        costByProjectItem.isHidden = true
+        menu.setSubmenu(costByProjectMenu, for: costByProjectItem)
+        menu.addItem(costByProjectItem)
         menu.addItem(.separator())
-
-        let thresholdMenu = NSMenu()
-        for threshold in idleThresholds {
-            let label = "Idle threshold: \(Int(threshold / 60)) min"
-            let item = NSMenuItem(title: label, action: #selector(setIdleThreshold), keyEquivalent: "")
-            item.representedObject = threshold
-            item.target = self
-            thresholdMenu.addItem(item)
-            thresholdItems.append(item)
-        }
-        let thresholdParent = NSMenuItem(title: "Idle Detection", action: nil, keyEquivalent: "")
-        menu.setSubmenu(thresholdMenu, for: thresholdParent)
-        menu.addItem(thresholdParent)
 
         let closedLidMenu = NSMenu()
         closedLidToggleItem.target = self
@@ -326,9 +292,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.setSubmenu(overnightMenu, for: overnightParent)
         menu.addItem(overnightParent)
 
-        monitoringToggleItem.target = self
-        menu.addItem(monitoringToggleItem)
-
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit ClaudeCaffeine", action: #selector(quitApp), keyEquivalent: "q")
@@ -358,7 +321,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             overnightStatusItem.isHidden = true
         }
-        monitoringToggleItem.isEnabled = !enabled
     }
 
     // MARK: - Power source monitoring
@@ -406,19 +368,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Poll loop
 
     private func refresh() {
-        guard monitoringEnabled || overnightMode.isEnabled else {
-            applyPausedState(now: Date())
-            return
-        }
-
         guard !isPollInFlight else {
             pollQueued = true
             return
         }
 
         isPollInFlight = true
-        let idleThreshold = self.idleThreshold
         let activityMonitor = self.activityMonitor
+        let idleThreshold = self.idleThreshold
         pollTask = Task.detached(priority: .utility) { [activityMonitor, weak self] in
             let pollDate = Date()
             let snapshot = activityMonitor.poll(now: pollDate, idleThreshold: idleThreshold)
@@ -426,23 +383,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.applyPoll(snapshot: snapshot, now: pollDate)
             }
         }
-    }
-
-    private func applyPausedState(now: Date) {
-        sleepAssertion.releaseAll()
-        if closedDisplayManager.isEnabled {
-            closedDisplayManager.disable()
-        }
-        statusLineItem.title = "Status: monitoring paused"
-        processLineItem.title = "Process: n/a"
-        sessionsLineItem.title = "Active sessions: n/a"
-        closedLidLineItem.title = "Closed-lid: n/a"
-        lastCheckLineItem.title = "Last check: \(DateFormatter.localizedString(from: now, dateStyle: .none, timeStyle: .medium))"
-        updateThresholdCheckmarks()
-        updateClosedLidMenu()
-        updateCostDisplay()
-        menuBarAnimator.stop()
-        updateMenuBarIcon(isKeepingAwake: false, closedLidActive: false, monitoringEnabled: false, hasWarning: false)
     }
 
     private func applyPoll(snapshot: ClaudeTaskActivityMonitor.PollSnapshot, now: Date) {
@@ -453,11 +393,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pollQueued = false
                 refresh()
             }
-        }
-
-        guard monitoringEnabled else {
-            applyPausedState(now: now)
-            return
         }
 
         let activeSessions = snapshot.activeSessions
@@ -515,26 +450,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         processLineItem.title = processText
         sessionsLineItem.title = sessionsText
         lastCheckLineItem.title = "Last check: \(DateFormatter.localizedString(from: now, dateStyle: .none, timeStyle: .medium))"
-        updateThresholdCheckmarks()
         updateClosedLidMenu()
-        menuBarAnimator.update(isActive: isActivelyWorking)
+        updateCostDisplay()
+        let todayCost = lastCostSnapshot?.todayCost ?? 0
+        menuBarAnimator.update(isActive: isActivelyWorking, todayCost: todayCost)
         updateMenuBarIcon(
             isKeepingAwake: sleepAssertion.isHeld,
             closedLidActive: closedLidEnabled,
-            monitoringEnabled: monitoringEnabled,
             hasWarning: hasWarning
         )
-
-        taskCompletionNotifier.update(isActivelyWorking: isActivelyWorking)
-        updateCostDisplay()
+        taskCompletionNotifier.update(isActivelyWorking: isActivelyWorking, currentCost: todayCost)
 
         if overnightMode.isEnabled {
             overnightMode.update(isActivelyWorking: isActivelyWorking, now: now)
             updateOvernightMenu()
             if !overnightMode.isEnabled {
-                monitoringEnabled = preOvernightMonitoring
                 closedLidEnabled = preOvernightClosedLid
-                monitoringToggleItem.title = monitoringEnabled ? "Pause Monitoring" : "Resume Monitoring"
                 updateClosedLidMenu()
             }
         }
@@ -603,6 +534,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             costDetailLineItem.isHidden = true
         }
+
+        costByProjectMenu.removeAllItems()
+        if snapshot.projectCosts.isEmpty {
+            costByProjectItem.isHidden = true
+        } else {
+            costByProjectItem.isHidden = false
+            for project in snapshot.projectCosts {
+                let name = displayName(for: project.projectName)
+                var label = "\(name): \(formatCost(project.todayCost)) (\(project.todaySessions) sessions)"
+                if project.weekCost > project.todayCost {
+                    label += " · week: \(formatCost(project.weekCost))"
+                }
+                let item = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                costByProjectMenu.addItem(item)
+            }
+        }
+    }
+
+    private func displayName(for projectPath: String) -> String {
+        let decoded = projectPath.replacingOccurrences(of: "-", with: "/")
+        return (decoded as NSString).lastPathComponent
     }
 
     private func formatCost(_ cost: Double) -> String {
@@ -642,14 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         idleFormatter.string(from: max(duration, 0)) ?? "0s"
     }
 
-    private func updateThresholdCheckmarks() {
-        for item in thresholdItems {
-            let value = item.representedObject as? TimeInterval
-            item.state = value == idleThreshold ? .on : .off
-        }
-    }
-
-    private func updateMenuBarIcon(isKeepingAwake: Bool, closedLidActive: Bool, monitoringEnabled: Bool, hasWarning: Bool) {
+    private func updateMenuBarIcon(isKeepingAwake: Bool, closedLidActive: Bool, hasWarning: Bool) {
         guard let button = statusItem?.button else {
             return
         }
@@ -660,9 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let symbolName: String
-        if !monitoringEnabled {
-            symbolName = "pause.circle"
-        } else if hasWarning {
+        if hasWarning {
             symbolName = "exclamationmark.triangle"
         } else if closedLidActive {
             symbolName = "lock.laptopcomputer"
@@ -672,6 +616,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "ClaudeCaffeine")
         button.image?.isTemplate = true
+
+        let todayCost = lastCostSnapshot?.todayCost ?? 0
+        menuBarAnimator.updateCostTitle(todayCost: todayCost)
     }
 
     private func showAlert(title: String, message: String) {
@@ -684,7 +631,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func sendNotification(title: String, body: String) {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil,
+              Bundle.main.bundlePath.hasSuffix(".app") else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

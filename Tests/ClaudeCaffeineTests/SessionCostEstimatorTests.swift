@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import ClaudeCaffeine
 
+@MainActor
 final class SessionCostEstimatorTests: XCTestCase {
     private var fixtureRootURL: URL!
 
@@ -124,6 +125,64 @@ final class SessionCostEstimatorTests: XCTestCase {
         let snapshot = estimator.estimateCosts(now: now)
 
         XCTAssertEqual(snapshot.activeSessions.first?.messageCount, 1)
+    }
+
+    func testParsesMillisecondTimestamps() throws {
+        // Use "now" and derive the timestamp from it so the test works in any timezone
+        let now = Date()
+        let fiveMinutesAgo = now.addingTimeInterval(-300)
+        // Format with milliseconds, matching Claude Code's actual output
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+        df.timeZone = TimeZone(identifier: "UTC")
+        let ts = df.string(from: fiveMinutesAgo)
+
+        let projectDir = fixtureRootURL.appendingPathComponent("millis-test")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let sessionFile = projectDir.appendingPathComponent("millis.jsonl")
+        try assistantLine(model: "claude-sonnet-4-6", input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        XCTAssertEqual(snapshot.todaySessions, 1, "Session with millisecond timestamp should be counted as today")
+        XCTAssertGreaterThan(snapshot.todayCost, 0)
+        XCTAssertNotNil(snapshot.activeSessions.first?.firstMessageAt)
+        XCTAssertNotNil(snapshot.activeSessions.first?.lastMessageAt)
+    }
+
+    func testProjectCostsGroupedByProject() throws {
+        let now = Date()
+        let ts = ISO8601DateFormatter().string(from: now)
+
+        let projectA = fixtureRootURL.appendingPathComponent("project-a")
+        let projectB = fixtureRootURL.appendingPathComponent("project-b")
+        try FileManager.default.createDirectory(at: projectA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: projectB, withIntermediateDirectories: true)
+
+        // Two sessions in project-a
+        try assistantLine(model: "claude-sonnet-4-6", input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: projectA.appendingPathComponent("s1.jsonl"), atomically: true, encoding: .utf8)
+        try assistantLine(model: "claude-sonnet-4-6", input: 500, output: 200, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: projectA.appendingPathComponent("s2.jsonl"), atomically: true, encoding: .utf8)
+
+        // One session in project-b
+        try assistantLine(model: "claude-opus-4-6", input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: projectB.appendingPathComponent("s3.jsonl"), atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        XCTAssertEqual(snapshot.projectCosts.count, 2)
+        // Sorted by todayCost descending — opus is more expensive
+        XCTAssertEqual(snapshot.projectCosts[0].projectName, "project-b")
+        XCTAssertEqual(snapshot.projectCosts[0].todaySessions, 1)
+        XCTAssertEqual(snapshot.projectCosts[1].projectName, "project-a")
+        XCTAssertEqual(snapshot.projectCosts[1].todaySessions, 2)
+        XCTAssertGreaterThan(snapshot.projectCosts[0].todayCost, 0)
+        XCTAssertGreaterThan(snapshot.projectCosts[1].todayCost, 0)
     }
 
     func testMissingProjectsRootReturnsEmpty() {
