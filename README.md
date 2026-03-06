@@ -139,7 +139,7 @@ rm -rf ~/Library/ClaudeCaffeine
 
 ## Changelog
 
-### v1.2.0 (upcoming)
+### v1.2.0
 
 - **Closed-lid summary popover** — When you open the lid, shows how long Claude kept working while it was closed. If the Mac slept after Claude went idle, that's noted too.
 - **Extracted ClosedLidReporter** — Closed-lid duration tracking is now a standalone testable component.
