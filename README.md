@@ -1,8 +1,8 @@
-# ClaudeCaffeine
+# Claude Caffeine
 
 **Keeps your Mac awake while Claude Code is working — even with the lid closed.**
 
-ClaudeCaffeine is a lightweight macOS menu bar app that detects active Claude Code sessions and prevents sleep. When Claude goes idle, your Mac sleeps normally again.
+Claude Caffeine is a lightweight macOS menu bar app that detects active Claude Code sessions and prevents sleep. When Claude goes idle, your Mac sleeps normally again.
 
 **Quick setup:** `brew install --cask jmslau/tap/claude-caffeine && open /Applications/ClaudeCaffeine.app`
 
@@ -29,17 +29,17 @@ Requires macOS 13 (Ventura) or later.
 
 You start a Claude Code task — a multi-file refactor, a test suite, a long build-and-fix loop. You step away or close the lid. macOS puts your machine to sleep. The API call drops. You come back to a half-finished job.
 
-ClaudeCaffeine makes this a non-issue.
+Claude Caffeine makes this a non-issue.
 
 ## Features
 
 - **Sleep prevention** — Holds a macOS sleep assertion while Claude Code is actively working
 - **Closed-lid mode** — Keeps your MacBook running with the lid shut (requires one-time helper install)
 - **Smart detection** — Monitors Claude process CPU, network connections, and `~/.claude/tasks/` file activity
-- **Task completion alerts** — Notification + sound when Claude finishes working
-- **Session cost tracking** — Shows estimated API cost for today and this week in the menu bar
+- **Task completion alerts** — Notification + sound when Claude finishes working, with duration and cost summary
+- **Session cost tracking** — Shows estimated API cost for today and this week in the menu bar (toggleable)
+- **Closed-lid summary** — When you open the lid, a popover shows how long Claude kept working while the lid was closed
 - **Overnight mode** — Unattended multi-hour sessions with auto-disable after 12h and a summary notification
-- **Configurable idle threshold** — 1, 2, 5, or 10 minute sensitivity
 - **Low battery protection** — Suspends closed-lid mode below 10% battery
 - **Clean shutdown** — Always restores normal sleep on quit, crash, or signal
 
@@ -57,7 +57,7 @@ Both signals must go quiet before the sleep lock is released.
 
 | Icon | Meaning |
 |------|---------|
-| **bolt** (animated) | Claude is working — Mac is being kept awake, with elapsed timer |
+| **bolt** (animated) | Claude is working — Mac is being kept awake |
 | **lock.laptop** | Closed-lid mode enabled |
 | **moon.zzz** | Idle — no active Claude Code sessions |
 | **warning** | Scan issue — holding lock during grace period |
@@ -95,7 +95,7 @@ Pricing covers Opus, Sonnet, and Haiku model families including cache read/write
 
 For unattended multi-hour sessions. Enable from the menu before you leave.
 
-- Forces monitoring and closed-lid mode on
+- Forces closed-lid mode on
 - Tracks active vs. idle time with transition logging
 - Auto-disables after 12 hours as a safety measure
 - Sends a summary notification with duration, active/idle breakdown, and transition count
@@ -104,14 +104,7 @@ Previous settings are restored when overnight mode ends.
 
 ## Configuration
 
-**Idle threshold** — How long Claude must be quiet before releasing the sleep lock:
-
-| Threshold | Best for |
-|-----------|----------|
-| 1 min | Fast feedback, may flicker between states |
-| **2 min** | Default — good balance for most tasks |
-| 5 min | Long builds with gaps between steps |
-| 10 min | Very conservative |
+**Show Cost Meter** — Toggle the running cost display in the menu bar on or off. Enabled by default.
 
 **Notifications** — Toggle completion notifications and sound independently.
 
@@ -143,6 +136,31 @@ If you installed the closed-lid helper, remove it first via **Closed-Lid Mode > 
 sudo rm /private/etc/sudoers.d/claude_caffeine
 rm -rf ~/Library/ClaudeCaffeine
 ```
+
+## Changelog
+
+### v1.2.0 (upcoming)
+
+- **Closed-lid summary popover** — When you open the lid, shows how long Claude kept working while it was closed. If the Mac slept after Claude went idle, that's noted too.
+- **Extracted ClosedLidReporter** — Closed-lid duration tracking is now a standalone testable component.
+
+### v1.1.1
+
+- **Show Cost Meter toggle** — Menu item to hide/show the cost display in the menu bar, with API pricing disclaimer.
+
+### v1.1.0
+
+- **Session cost tracking** — Parses `~/.claude/projects/` JSONL logs to estimate API costs. Per-model pricing (Opus, Sonnet, Haiku) including cache tokens. Costs refresh every 30 seconds with file-level caching.
+- **Cost by project** — Submenu breaking down costs per project.
+- **Task completion notifications** — Notification + sound when Claude finishes, with duration and cost delta summary.
+- **Animated menu bar icon** — Bolt icon animates while Claude is active, with live today cost display.
+- **Per-model pricing** — Each message is costed using its own model, so mixed-model sessions are accurate.
+- **Removed pause monitoring** — Redundant since the sleep lock auto-releases when Claude goes idle.
+- **API pricing disclaimer** — README note that cost estimates are for pay-per-token API users only.
+
+### v1.0.0
+
+- Initial release: sleep prevention, closed-lid mode, smart detection, overnight mode, low battery protection, clean shutdown.
 
 ## License
 

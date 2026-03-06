@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarAnimator = MenuBarAnimator()
     private let overnightMode = OvernightMode()
     private let costEstimator = SessionCostEstimator()
+    private let closedLidReporter = ClosedLidReporter()
 
     /// How long a session can be idle before we release the sleep assertion.
     private let idleThreshold: TimeInterval = 60
@@ -115,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         menuBarAnimator.configure(statusItem: statusItem!)
         startPowerSourceMonitor()
+        registerForWakeNotifications()
         promptForHelperIfNeeded()
         refresh()
         pollTimer = Timer.scheduledTimer(
@@ -310,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit ClaudeCaffeine", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Claude Caffeine", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -361,7 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Install Closed-Lid Helper?"
-        alert.informativeText = "ClaudeCaffeine can prevent your Mac from sleeping when you close the lid while Claude Code is working. This requires a small privileged helper. You can install or remove it later from the menu."
+        alert.informativeText = "Claude Caffeine can prevent your Mac from sleeping when you close the lid while Claude Code is working. This requires a small privileged helper. You can install or remove it later from the menu."
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Not Now")
         alert.alertStyle = .informational
@@ -489,9 +491,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Closed-lid logic
 
+    private func registerForWakeNotifications() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    @objc
+    private func handleSystemWake() {
+        closedLidReporter.recordWake()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.showClosedLidReportIfNeeded()
+        }
+    }
+
+    @objc
+    private func handleScreenChange() {
+        // Lid opened while Claude was still working — snapshot the duration so far
+        closedLidReporter.snapshotActive()
+        showClosedLidReportIfNeeded()
+    }
+
+    private func showClosedLidReportIfNeeded() {
+        guard let report = closedLidReporter.consumeReport() else { return }
+        showPopover(message: report.message)
+    }
+
+    private var closedLidPopover: NSPopover?
+
+    private func showPopover(message: String) {
+        guard let button = statusItem?.button else { return }
+
+        closedLidPopover?.performClose(nil)
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 320, height: 10) // height auto-sizes
+
+        let viewController = NSViewController()
+        viewController.loadView()
+
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 10))
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(wrappingLabelWithString: message)
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.font = .systemFont(ofSize: 13)
+        label.preferredMaxLayoutWidth = 288
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let okButton = NSButton(title: "OK", target: self, action: #selector(dismissClosedLidPopover))
+        okButton.translatesAutoresizingMaskIntoConstraints = false
+        okButton.bezelStyle = .rounded
+        okButton.keyEquivalent = "\r"
+
+        contentView.addSubview(label)
+        contentView.addSubview(okButton)
+
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            okButton.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12),
+            okButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            okButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+        ])
+
+        viewController.view = contentView
+        popover.contentViewController = viewController
+        closedLidPopover = popover
+
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    @objc
+    private func dismissClosedLidPopover() {
+        closedLidPopover?.performClose(nil)
+        closedLidPopover = nil
+    }
+
     private func applyClosedLidState(hasActiveSessions: Bool) {
         guard closedLidEnabled else {
             if closedDisplayManager.isEnabled {
+                closedLidReporter.recordEnd()
+                // Delay to let wake notification fire first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    self?.showClosedLidReportIfNeeded()
+                }
                 closedDisplayManager.disable()
             }
             closedLidLineItem.title = "Closed-lid: disabled"
@@ -500,6 +597,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if batteryMonitor.isBatteryLow {
             if closedDisplayManager.isEnabled {
+                closedLidReporter.recordEnd()
+                // Delay to let wake notification fire first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    self?.showClosedLidReportIfNeeded()
+                }
                 closedDisplayManager.disable()
             }
             if !lowBatteryNotified {
@@ -519,9 +621,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !closedDisplayManager.isEnabled {
                 closedDisplayManager.enable()
             }
+            closedLidReporter.recordStart()
             closedLidLineItem.title = "Closed-lid: active (preventing sleep)"
         } else {
             if closedDisplayManager.isEnabled {
+                closedLidReporter.recordEnd()
+                // Delay to let wake notification fire first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    self?.showClosedLidReportIfNeeded()
+                }
                 closedDisplayManager.disable()
             }
             closedLidLineItem.title = "Closed-lid: standby (no active sessions)"
@@ -630,7 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             symbolName = "moon.zzz"
         }
 
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "ClaudeCaffeine")
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Claude Caffeine")
         button.image?.isTemplate = true
 
         let todayCost = lastCostSnapshot?.todayCost ?? 0

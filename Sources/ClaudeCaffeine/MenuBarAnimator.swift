@@ -90,7 +90,7 @@ final class MenuBarAnimator: NSObject {
         let symbolName = Self.activeFrames[frameIndex % Self.activeFrames.count]
         frameIndex += 1
 
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "ClaudeCaffeine")
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Claude Caffeine")
         button.image?.isTemplate = true
         button.title = showCost ? " \(formatCost(currentCost))" : ""
     }
