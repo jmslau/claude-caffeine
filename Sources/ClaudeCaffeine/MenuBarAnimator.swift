@@ -7,6 +7,15 @@ final class MenuBarAnimator: NSObject {
     private var isActive = false
     private var frameIndex = 0
     private var currentCost: Double = 0
+    var showCost = true {
+        didSet {
+            if showCost {
+                statusItem?.button?.title = " \(formatCost(currentCost))"
+            } else {
+                statusItem?.button?.title = ""
+            }
+        }
+    }
 
     private static let activeFrames = ["bolt.circle", "bolt.circle.fill"]
 
@@ -27,7 +36,7 @@ final class MenuBarAnimator: NSObject {
 
     func updateCostTitle(todayCost: Double) {
         currentCost = todayCost
-        statusItem?.button?.title = " \(formatCost(todayCost))"
+        statusItem?.button?.title = showCost ? " \(formatCost(todayCost))" : ""
     }
 
     func stop() {
@@ -83,7 +92,7 @@ final class MenuBarAnimator: NSObject {
 
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "ClaudeCaffeine")
         button.image?.isTemplate = true
-        button.title = " \(formatCost(currentCost))"
+        button.title = showCost ? " \(formatCost(currentCost))" : ""
     }
 
     private func formatCost(_ cost: Double) -> String {

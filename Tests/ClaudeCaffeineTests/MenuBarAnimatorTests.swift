@@ -73,4 +73,27 @@ final class MenuBarAnimatorTests: XCTestCase {
         let title = statusItem.button?.title ?? ""
         XCTAssertTrue(title.contains("$0.00"), "Expected $0.00 with default parameter, got: \(title)")
     }
+
+    func testShowCostDisabledHidesTitle() {
+        animator.update(isActive: true, todayCost: 5.00)
+        animator.showCost = false
+
+        XCTAssertEqual(statusItem.button?.title, "")
+    }
+
+    func testShowCostReenabledRestoresTitle() {
+        animator.update(isActive: false, todayCost: 5.00)
+        animator.showCost = false
+        animator.showCost = true
+
+        let title = statusItem.button?.title ?? ""
+        XCTAssertTrue(title.contains("$5.00"), "Expected cost restored in title, got: \(title)")
+    }
+
+    func testUpdateWhileShowCostDisabledKeepsTitleEmpty() {
+        animator.showCost = false
+        animator.update(isActive: true, todayCost: 10.00)
+
+        XCTAssertEqual(statusItem.button?.title, "")
+    }
 }

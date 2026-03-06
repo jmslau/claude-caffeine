@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let idleThreshold: TimeInterval = 60
     private let monitorFailureGracePeriod: TimeInterval = 30
     private var closedLidEnabled = true
+    private var showCostMeter = true
     private var lowBatteryNotified = false
     private var preOvernightClosedLid = true
 
@@ -86,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyEquivalent: ""
     )
     private var overnightStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var costMeterToggleItem = NSMenuItem(
+        title: "Show Cost Meter (Estimates based on API pricing)",
+        action: #selector(toggleCostMeter),
+        keyEquivalent: ""
+    )
     private var costLineItem = NSMenuItem(title: "Cost: --", action: nil, keyEquivalent: "")
     private var costDetailLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var costByProjectItem = NSMenuItem(title: "Cost by Project", action: nil, keyEquivalent: "")
@@ -175,6 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
+    private func toggleCostMeter() {
+        showCostMeter.toggle()
+        costMeterToggleItem.state = showCostMeter ? .on : .off
+        menuBarAnimator.showCost = showCostMeter
+    }
+
+    @objc
     private func toggleOvernightMode() {
         if overnightMode.isEnabled {
             let summary = overnightMode.stop()
@@ -254,6 +267,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         costDetailLineItem.isHidden = true
         menu.addItem(costLineItem)
         menu.addItem(costDetailLineItem)
+        costMeterToggleItem.target = self
+        costMeterToggleItem.state = .on
+        menu.addItem(costMeterToggleItem)
         costByProjectItem.isHidden = true
         menu.setSubmenu(costByProjectMenu, for: costByProjectItem)
         menu.addItem(costByProjectItem)
