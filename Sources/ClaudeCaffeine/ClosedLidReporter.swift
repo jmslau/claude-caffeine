@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let logger = Logger(subsystem: "com.jmslau.claudecaffeine", category: "closedLid")
 
 struct ClosedLidReport: Equatable {
     let duration: TimeInterval
@@ -32,6 +35,7 @@ final class ClosedLidReporter {
 
     func recordStart(now: Date = Date()) {
         if activeStart == nil {
+            logger.info("Closed-lid tracking started")
             activeStart = now
         }
     }
@@ -40,6 +44,7 @@ final class ClosedLidReporter {
         guard let start = activeStart else { return }
         let duration = now.timeIntervalSince(start)
         activeStart = nil
+        logger.info("Closed-lid tracking ended, duration=\(Int(duration))s, minimum=\(Int(self.minimumDuration))s")
         if duration >= minimumDuration {
             pendingDuration = duration
         }

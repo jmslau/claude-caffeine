@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
+import OSLog
 import UserNotifications
+
+private let logger = Logger(subsystem: "com.jmslau.claudecaffeine", category: "app")
 
 // Accessed from signal handler on an arbitrary thread — inherently racy but acceptable
 // as best-effort cleanup during termination. forceDisable() performs a single shell call
@@ -508,6 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc
     private func handleSystemWake() {
+        logger.info("System wake detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
         closedLidReporter.recordWake()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.showClosedLidReportIfNeeded()
@@ -516,13 +520,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc
     private func handleScreenChange() {
-        // Lid opened while Claude was still working — snapshot the duration so far
+        logger.info("Screen change detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
         closedLidReporter.snapshotActive()
         showClosedLidReportIfNeeded()
     }
 
     private func showClosedLidReportIfNeeded() {
-        guard let report = closedLidReporter.consumeReport() else { return }
+        guard let report = closedLidReporter.consumeReport() else {
+            logger.info("No closed-lid report to show")
+            return
+        }
+        logger.info("Showing closed-lid report: \(report.message)")
         showPopover(message: report.message)
     }
 
