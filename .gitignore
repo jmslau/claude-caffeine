@@ -9,5 +9,4 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 .beads/
-AGENTS.md
 ISSUES.md
