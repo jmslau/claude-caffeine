@@ -2,7 +2,7 @@ cask "claude-caffeine" do
   version "1.2.1"
   sha256 "2b44acb5af74a6a6bcc9b01ebc290656141250bb9b9087e5277ac38aa6f755ed"
 
-  url "https://github.com/jmslau/claude-caffeine/releases/download/v#{version}/Claude%20Caffeine.app.zip",
+  url "https://github.com/jmslau/claude-caffeine/releases/download/v#{version}/Claude-Caffeine.app.zip",
       verified: "github.com/jmslau/claude-caffeine/"
   name "Claude Caffeine"
   desc "Keeps your Mac awake while Claude Code is working"

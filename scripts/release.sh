@@ -79,11 +79,11 @@ APP_VERSION="$VERSION" "$SCRIPT_DIR/make-app-bundle.sh"
 
 echo "==> Creating zip archive"
 DIST_DIR="$PROJECT_DIR/dist"
-ZIP_PATH="$DIST_DIR/Claude Caffeine.app.zip"
+ZIP_PATH="$DIST_DIR/Claude-Caffeine.app.zip"
 
 rm -f "$ZIP_PATH"
 cd "$DIST_DIR"
-ditto -c -k --keepParent "Claude Caffeine.app" "Claude Caffeine.app.zip"
+ditto -c -k --keepParent "Claude Caffeine.app" "Claude-Caffeine.app.zip"
 cd "$PROJECT_DIR"
 
 # --- Compute SHA256 ---
@@ -122,7 +122,7 @@ Install:
 brew install --cask jmslau/tap/claude-caffeine
 \`\`\`
 
-Or download \`Claude Caffeine.app.zip\` below."
+Or download \`Claude-Caffeine.app.zip\` below."
 
 # --- Update homebrew-tap ---
 
