@@ -3,9 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-APP_NAME="ClaudeCaffeine"
+BIN_NAME="ClaudeCaffeine"
+APP_NAME="Claude Caffeine"
 APP_DIR="$PROJECT_DIR/dist/$APP_NAME.app"
-BIN_PATH="$PROJECT_DIR/.build/release/$APP_NAME"
+BIN_PATH="$PROJECT_DIR/.build/release/$BIN_NAME"
 APP_VERSION="${APP_VERSION:-0.1.0}"
 APP_BUILD="${APP_BUILD:-1}"
 BUNDLE_ID="${BUNDLE_ID:-com.jmslau.claudecaffeine}"
@@ -17,8 +18,9 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
-chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$BIN_NAME"
+cp "$PROJECT_DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+chmod +x "$APP_DIR/Contents/MacOS/$BIN_NAME"
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,8 +35,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleName</key>
-  <string>ClaudeCaffeine</string>
+  <string>Claude Caffeine</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

@@ -4,13 +4,22 @@
 
 Claude Caffeine is a lightweight macOS menu bar app that detects active Claude Code sessions and prevents sleep. When Claude goes idle, your Mac sleeps normally again.
 
-**Quick setup:** `brew install --cask jmslau/tap/claude-caffeine && open /Applications/ClaudeCaffeine.app`
+**Quick setup:** `brew install --cask jmslau/tap/claude-caffeine && xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app && open /Applications/Claude\ Caffeine.app`
 
 ## Install
 
 ```bash
 brew install --cask jmslau/tap/claude-caffeine
 ```
+
+The app is not yet notarized with Apple, so macOS may show a warning on first launch. To bypass it:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app
+open /Applications/Claude\ Caffeine.app
+```
+
+Or go to **System Settings > Privacy & Security** and click **"Open Anyway"**.
 
 Or build from source:
 
@@ -19,8 +28,8 @@ git clone https://github.com/jmslau/claude-caffeine.git
 cd claude-caffeine
 swift build -c release
 ./scripts/make-app-bundle.sh
-cp -r dist/ClaudeCaffeine.app /Applications/
-open /Applications/ClaudeCaffeine.app
+cp -r dist/Claude\ Caffeine.app /Applications/
+open /Applications/Claude\ Caffeine.app
 ```
 
 Requires macOS 13 (Ventura) or later.
@@ -139,10 +148,15 @@ rm -rf ~/Library/ClaudeCaffeine
 
 ## Changelog
 
+### v1.2.1
+
+- **App icon** — Custom coffee cup + lightning bolt icon in Claude's terracotta.
+- **App renamed** — Bundle is now "Claude Caffeine.app" (with a space) in Applications.
+- **Gatekeeper bypass** — Added `xattr` instructions for unsigned app warning.
+
 ### v1.2.0
 
 - **Closed-lid summary popover** — When you open the lid, shows how long Claude kept working while it was closed. If the Mac slept after Claude went idle, that's noted too.
-- **Extracted ClosedLidReporter** — Closed-lid duration tracking is now a standalone testable component.
 
 ### v1.1.1
 

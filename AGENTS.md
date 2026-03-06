@@ -81,7 +81,7 @@ swift test            # Run all tests
 
 ### App Bundle
 ```bash
-./scripts/make-app-bundle.sh    # Creates dist/ClaudeCaffeine.app
+./scripts/make-app-bundle.sh    # Creates dist/Claude Caffeine.app
 ```
 
 ### Important Constraints

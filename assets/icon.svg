@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8875B"/>
+      <stop offset="100%" stop-color="#D4603A"/>
+    </linearGradient>
+    <linearGradient id="cup" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F0E8E0"/>
+    </linearGradient>
+    <linearGradient id="coffee" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6B3A2A"/>
+      <stop offset="100%" stop-color="#4A2518"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="32" y="32" width="960" height="960" rx="215" ry="215" fill="url(#bg)"/>
+
+  <!-- Coffee cup body -->
+  <path d="M280 420 L310 750 Q320 810 380 810 L610 810 Q670 810 680 750 L710 420 Z"
+        fill="url(#cup)" opacity="0.95"/>
+
+  <!-- Coffee surface -->
+  <ellipse cx="495" cy="520" rx="200" ry="35" fill="url(#coffee)"/>
+
+  <!-- Cup handle -->
+  <path d="M710 480 Q810 480 810 570 Q810 660 710 660"
+        fill="none" stroke="url(#cup)" stroke-width="45" stroke-linecap="round" opacity="0.95"/>
+
+  <!-- Bolt / lightning symbol (steam + energy) -->
+  <path d="M460 180 L420 360 L490 340 L450 520"
+        fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+  <path d="M540 150 L500 330 L570 310 L530 490"
+        fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+
+  <!-- Subtle rim highlight -->
+  <path d="M300 420 L690 420"
+        fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.4"/>
+</svg>
