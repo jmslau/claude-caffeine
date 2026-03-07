@@ -141,7 +141,7 @@ swift run            # run from source
 Release build and cask update:
 
 ```bash
-./scripts/release.sh 1.0.0
+./scripts/release.sh X.X.X
 ```
 
 ---
