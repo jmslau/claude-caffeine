@@ -7,15 +7,27 @@ struct ClosedLidReport: Equatable {
     let duration: TimeInterval
     let didSleepAfterIdle: Bool
 
-    var message: String {
-        let minutes = Int(duration / 60)
-        let durationText = minutes >= 60
-            ? "\(minutes / 60)h \(minutes % 60)m"
-            : "\(minutes)m"
+    var durationText: String {
+        let totalSeconds = Int(duration)
+        if totalSeconds < 60 {
+            return "\(totalSeconds) sec"
+        } else if totalSeconds < 3600 {
+            let mins = totalSeconds / 60
+            let secs = totalSeconds % 60
+            let minsText = mins == 1 ? "1 min" : "\(mins) mins"
+            return secs > 0 ? "\(minsText) \(secs) sec" : minsText
+        } else {
+            let hours = totalSeconds / 3600
+            let mins = (totalSeconds % 3600) / 60
+            let hoursText = hours == 1 ? "1 hour" : "\(hours) hours"
+            return mins > 0 ? "\(hoursText) \(mins) mins" : hoursText
+        }
+    }
 
-        var text = "We kept Claude working for an extra \(durationText) while your laptop lid was closed."
+    var message: String {
+        var text = "Claude kept working for an extra \(durationText) while your laptop lid was closed."
         if didSleepAfterIdle {
-            text += "\nYour computer went to sleep after Claude went idle."
+            text += "\nYour Mac went to sleep after Claude went idle."
         }
         return text
     }
@@ -29,7 +41,7 @@ final class ClosedLidReporter {
 
     let minimumDuration: TimeInterval
 
-    init(minimumDuration: TimeInterval = 60) {
+    init(minimumDuration: TimeInterval = 10) {
         self.minimumDuration = minimumDuration
     }
 

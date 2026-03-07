@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IOKit
 import OSLog
 import UserNotifications
 
@@ -44,7 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarAnimator = MenuBarAnimator()
     private let overnightMode = OvernightMode()
     private let costEstimator = SessionCostEstimator()
+    #if DEBUG
+    private let closedLidReporter = ClosedLidReporter(minimumDuration: 1)
+    #else
     private let closedLidReporter = ClosedLidReporter()
+    #endif
 
     /// How long a session can be idle before we release the sleep assertion.
     private let idleThreshold: TimeInterval = 60
@@ -100,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var costDetailLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var costByProjectItem = NSMenuItem(title: "Cost by Project", action: nil, keyEquivalent: "")
     private var costByProjectMenu = NSMenu()
+    private var lidWasClosed = false
     private var pollTimer: Timer?
     private var pollTask: Task<Void, Never>?
     private var isPollInFlight = false
@@ -115,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         sharedClosedDisplayManager = closedDisplayManager
+        lidWasClosed = isLidClosed
 
         setupMenuBar()
         menuBarAnimator.configure(statusItem: statusItem!)
@@ -315,6 +322,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        #if DEBUG
+        let debugScenarios: [(String, TimeInterval, Bool)] = [
+            ("Popup: 15s, no sleep", 15, false),
+            ("Popup: 15s, slept after idle", 15, true),
+            ("Popup: 5m, no sleep", 5 * 60, false),
+            ("Popup: 5m, slept after idle", 5 * 60, true),
+            ("Popup: 45m, no sleep", 45 * 60, false),
+            ("Popup: 45m, slept after idle", 45 * 60, true),
+            ("Popup: 2h 30m, no sleep", 150 * 60, false),
+            ("Popup: 2h 30m, slept after idle", 150 * 60, true),
+        ]
+        let debugMenu = NSMenu()
+        for (label, duration, didSleep) in debugScenarios {
+            let item = NSMenuItem(title: label, action: #selector(debugShowPopup(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = DebugReportBox(ClosedLidReport(duration: duration, didSleepAfterIdle: didSleep))
+            debugMenu.addItem(item)
+        }
+        let debugParent = NSMenuItem(title: "Debug", action: nil, keyEquivalent: "")
+        menu.setSubmenu(debugMenu, for: debugParent)
+        menu.addItem(debugParent)
+        menu.addItem(.separator())
+        #endif
+
         let quitItem = NSMenuItem(title: "Quit Claude Caffeine", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -322,6 +353,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         updateClosedLidMenu()
     }
+
+    #if DEBUG
+    private class DebugReportBox: NSObject {
+        let report: ClosedLidReport
+        init(_ report: ClosedLidReport) { self.report = report }
+    }
+
+    @objc
+    private func debugShowPopup(_ sender: NSMenuItem) {
+        guard let box = sender.representedObject as? DebugReportBox else { return }
+        showPopover(report: box.report)
+    }
+    #endif
 
     private func updateClosedLidMenu() {
         let installed = HelperInstaller.isInstalled
@@ -490,6 +534,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 updateClosedLidMenu()
             }
         }
+
+        // Poll-based lid detection fallback: catches lid open/close even when
+        // notifications don't fire (e.g. with pmset disablesleep active).
+        let lidClosed = isLidClosed
+        if lidWasClosed && !lidClosed {
+            lidWasClosed = false
+            closedLidReporter.snapshotActive()
+            showClosedLidReportIfNeeded()
+        } else if lidClosed {
+            lidWasClosed = true
+        }
     }
 
     // MARK: - Closed-lid logic
@@ -499,6 +554,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(handleSystemWake),
             name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleScreensSleep),
+            name: NSWorkspace.screensDidSleepNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -513,16 +574,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleSystemWake() {
         logger.info("System wake detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
         closedLidReporter.recordWake()
+        // Fallback: show after 2s in case handleScreenChange doesn't fire
+        // (e.g. waking to external display only, lid still closed).
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.showClosedLidReportIfNeeded()
         }
     }
 
     @objc
+    private func handleScreensSleep() {
+        if isLidClosed {
+            lidWasClosed = true
+            logger.info("Lid close detected (clamshell state at screen sleep)")
+        }
+    }
+
+    @objc
     private func handleScreenChange() {
-        logger.info("Screen change detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
+        if isLidClosed {
+            lidWasClosed = true
+            return
+        }
+        guard lidWasClosed else { return }
+        lidWasClosed = false
+        logger.info("Lid open detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
         closedLidReporter.snapshotActive()
         showClosedLidReportIfNeeded()
+    }
+
+    /// Reads the hardware lid sensor via IOKit, independent of display power state or pmset settings.
+    private var isLidClosed: Bool {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard service != IO_OBJECT_NULL else { return false }
+        defer { IOObjectRelease(service) }
+        guard let prop = IORegistryEntryCreateCFProperty(
+            service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
+        ) else { return false }
+        return (prop.takeRetainedValue() as? Bool) ?? false
     }
 
     private func showClosedLidReportIfNeeded() {
@@ -531,50 +619,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         logger.info("Showing closed-lid report: \(report.message)")
-        showPopover(message: report.message)
+        showPopover(report: report)
     }
 
     private var closedLidPopover: NSPopover?
 
-    private func showPopover(message: String) {
+    private func showPopover(report: ClosedLidReport) {
         guard let button = statusItem?.button else { return }
 
         closedLidPopover?.performClose(nil)
 
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 320, height: 10) // height auto-sizes
 
         let viewController = NSViewController()
-        viewController.loadView()
 
-        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 10))
-        contentView.translatesAutoresizingMaskIntoConstraints = false
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 0))
 
-        let label = NSTextField(wrappingLabelWithString: message)
-        label.isEditable = false
-        label.isBordered = false
-        label.drawsBackground = false
-        label.font = .systemFont(ofSize: 13)
-        label.preferredMaxLayoutWidth = 288
-        label.translatesAutoresizingMaskIntoConstraints = false
+        let headerLabel = NSTextField(labelWithString: "CLOSED-LID SESSION")
+        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.textColor = .secondaryLabelColor
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let durationLabel = NSTextField(labelWithString: report.durationText)
+        durationLabel.font = .systemFont(ofSize: 34, weight: .bold)
+        durationLabel.textColor = .labelColor
+        durationLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let bodyLabel = NSTextField(wrappingLabelWithString: "Claude kept working while your laptop lid was closed.")
+        bodyLabel.font = .systemFont(ofSize: 13)
+        bodyLabel.textColor = .secondaryLabelColor
+        bodyLabel.preferredMaxLayoutWidth = 268
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let okButton = NSButton(title: "OK", target: self, action: #selector(dismissClosedLidPopover))
         okButton.translatesAutoresizingMaskIntoConstraints = false
         okButton.bezelStyle = .rounded
         okButton.keyEquivalent = "\r"
 
-        contentView.addSubview(label)
-        contentView.addSubview(okButton)
+        contentView.addSubview(headerLabel)
+        contentView.addSubview(durationLabel)
+        contentView.addSubview(bodyLabel)
 
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            okButton.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12),
+        var constraints: [NSLayoutConstraint] = [
+            headerLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            headerLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            durationLabel.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 4),
+            durationLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
+            bodyLabel.topAnchor.constraint(equalTo: durationLabel.bottomAnchor, constant: 6),
+            bodyLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            bodyLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+        ]
+
+        var lastView: NSView = bodyLabel
+
+        if report.didSleepAfterIdle {
+            let sleepLabel = NSTextField(wrappingLabelWithString: "Your Mac went to sleep after Claude went idle.")
+            sleepLabel.font = .systemFont(ofSize: 12)
+            sleepLabel.textColor = .secondaryLabelColor
+            sleepLabel.preferredMaxLayoutWidth = 268
+            sleepLabel.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(sleepLabel)
+            constraints += [
+                sleepLabel.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6),
+                sleepLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                sleepLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            ]
+            lastView = sleepLabel
+        }
+
+        contentView.addSubview(okButton)
+        constraints += [
+            okButton.topAnchor.constraint(equalTo: lastView.bottomAnchor, constant: 12),
             okButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             okButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
-        ])
+        ]
+
+        NSLayoutConstraint.activate(constraints)
+
+        // Size the popover to fit content after constraints are applied
+        contentView.layoutSubtreeIfNeeded()
+        let fittingSize = contentView.fittingSize
+        popover.contentSize = NSSize(width: 300, height: fittingSize.height)
 
         viewController.view = contentView
         popover.contentViewController = viewController
@@ -593,10 +719,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard closedLidEnabled else {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
-                // Delay to let wake notification fire first
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                    self?.showClosedLidReportIfNeeded()
-                }
                 closedDisplayManager.disable()
             }
             closedLidLineItem.title = "Closed-lid: disabled"
@@ -606,10 +728,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if batteryMonitor.isBatteryLow {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
-                // Delay to let wake notification fire first
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                    self?.showClosedLidReportIfNeeded()
-                }
                 closedDisplayManager.disable()
             }
             if !lowBatteryNotified {
@@ -629,15 +747,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !closedDisplayManager.isEnabled {
                 closedDisplayManager.enable()
             }
-            closedLidReporter.recordStart()
+            if isLidClosed {
+                closedLidReporter.recordStart()
+            }
             closedLidLineItem.title = "Closed-lid: active (preventing sleep)"
         } else {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
-                // Delay to let wake notification fire first
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                    self?.showClosedLidReportIfNeeded()
-                }
                 closedDisplayManager.disable()
             }
             closedLidLineItem.title = "Closed-lid: standby (no active sessions)"

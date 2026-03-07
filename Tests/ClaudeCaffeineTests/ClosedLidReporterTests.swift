@@ -14,7 +14,7 @@ final class ClosedLidReporterTests: XCTestCase {
         let reporter = ClosedLidReporter()
         let start = Date()
         reporter.recordStart(now: start)
-        reporter.recordEnd(now: start.addingTimeInterval(30))
+        reporter.recordEnd(now: start.addingTimeInterval(5))
 
         XCTAssertNil(reporter.consumeReport())
     }
@@ -101,15 +101,33 @@ final class ClosedLidReporterTests: XCTestCase {
 
     // MARK: - Report message tests
 
+    func testDurationTextSeconds() {
+        XCTAssertEqual(ClosedLidReport(duration: 15, didSleepAfterIdle: false).durationText, "15 sec")
+        XCTAssertEqual(ClosedLidReport(duration: 1, didSleepAfterIdle: false).durationText, "1 sec")
+        XCTAssertEqual(ClosedLidReport(duration: 59, didSleepAfterIdle: false).durationText, "59 sec")
+    }
+
+    func testDurationTextMinutes() {
+        XCTAssertEqual(ClosedLidReport(duration: 60, didSleepAfterIdle: false).durationText, "1 min")
+        XCTAssertEqual(ClosedLidReport(duration: 300, didSleepAfterIdle: false).durationText, "5 mins")
+        XCTAssertEqual(ClosedLidReport(duration: 551, didSleepAfterIdle: false).durationText, "9 mins 11 sec")
+    }
+
+    func testDurationTextHours() {
+        XCTAssertEqual(ClosedLidReport(duration: 3600, didSleepAfterIdle: false).durationText, "1 hour")
+        XCTAssertEqual(ClosedLidReport(duration: 5400, didSleepAfterIdle: false).durationText, "1 hour 30 mins")
+        XCTAssertEqual(ClosedLidReport(duration: 9000, didSleepAfterIdle: false).durationText, "2 hours 30 mins")
+    }
+
     func testMessageShowsMinutes() {
         let report = ClosedLidReport(duration: 300, didSleepAfterIdle: false)
-        XCTAssertTrue(report.message.contains("5m"), "Expected '5m' in: \(report.message)")
+        XCTAssertTrue(report.message.contains("5 mins"), "Expected '5 mins' in: \(report.message)")
         XCTAssertFalse(report.message.contains("went to sleep"))
     }
 
     func testMessageShowsHoursAndMinutes() {
         let report = ClosedLidReport(duration: 5400, didSleepAfterIdle: false)
-        XCTAssertTrue(report.message.contains("1h 30m"), "Expected '1h 30m' in: \(report.message)")
+        XCTAssertTrue(report.message.contains("1 hour 30 mins"), "Expected '1 hour 30 mins' in: \(report.message)")
     }
 
     func testMessageIncludesSleepSentence() {
@@ -154,7 +172,7 @@ final class ClosedLidReporterTests: XCTestCase {
         let reporter = ClosedLidReporter()
         let start = Date()
         reporter.recordStart(now: start)
-        reporter.snapshotActive(now: start.addingTimeInterval(30))
+        reporter.snapshotActive(now: start.addingTimeInterval(5))
 
         XCTAssertNil(reporter.consumeReport())
     }

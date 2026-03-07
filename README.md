@@ -1,10 +1,8 @@
 # Claude Caffeine
 
-**Keeps your Mac awake while Claude Code is working — even with the lid closed.**
+You kick off a Claude Code task — a multi-file refactor, a test suite, a long build-and-fix loop. You close the lid and walk away. You come back to a half-finished job because macOS put your machine to sleep.
 
-Claude Caffeine is a lightweight macOS menu bar app that detects active Claude Code sessions and prevents sleep. When Claude goes idle, your Mac sleeps normally again.
-
-**Quick setup:** `brew install --cask jmslau/tap/claude-caffeine && xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app && open /Applications/Claude\ Caffeine.app`
+**Claude Caffeine fixes this.** A lightweight menu bar app that keeps your Mac awake while Claude Code is working — even with the lid closed. The moment Claude goes idle, normal sleep resumes.
 
 ## Install
 
@@ -12,7 +10,7 @@ Claude Caffeine is a lightweight macOS menu bar app that detects active Claude C
 brew install --cask jmslau/tap/claude-caffeine
 ```
 
-The app is not yet notarized with Apple, so macOS may show a warning on first launch. To bypass it:
+On first launch, macOS may show a Gatekeeper warning (the app isn't notarized yet). To clear it:
 
 ```bash
 xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app
@@ -21,7 +19,10 @@ open /Applications/Claude\ Caffeine.app
 
 Or go to **System Settings > Privacy & Security** and click **"Open Anyway"**.
 
-Or build from source:
+Requires macOS 13 (Ventura) or later.
+
+<details>
+<summary>Build from source</summary>
 
 ```bash
 git clone https://github.com/jmslau/claude-caffeine.git
@@ -32,46 +33,23 @@ cp -r dist/Claude\ Caffeine.app /Applications/
 open /Applications/Claude\ Caffeine.app
 ```
 
-Requires macOS 13 (Ventura) or later.
+</details>
 
-## The Problem
+## What it does
 
-You start a Claude Code task — a multi-file refactor, a test suite, a long build-and-fix loop. You step away or close the lid. macOS puts your machine to sleep. The API call drops. You come back to a half-finished job.
+**Keeps your Mac awake while Claude is working** — automatically, zero configuration. Sleep prevention engages when Claude Code is active and releases the moment it goes idle.
 
-Claude Caffeine makes this a non-issue.
+**Works with the lid closed** — close the lid, walk away. Claude keeps running. Open it later and a popover tells you exactly how long Claude worked while it was shut.
 
-## Features
+**Tracks your costs** — running API cost estimate in the menu bar, broken down by day, week, and project.
 
-- **Sleep prevention** — Holds a macOS sleep assertion while Claude Code is actively working
-- **Closed-lid mode** — Keeps your MacBook running with the lid shut (requires one-time helper install)
-- **Smart detection** — Monitors Claude process CPU, network connections, and `~/.claude/tasks/` file activity
-- **Task completion alerts** — Notification + sound when Claude finishes working, with duration and cost summary
-- **Session cost tracking** — Shows estimated API cost for today and this week in the menu bar (toggleable)
-- **Closed-lid summary** — When you open the lid, a popover shows how long Claude kept working while the lid was closed
-- **Overnight mode** — Unattended multi-hour sessions with auto-disable after 12h and a summary notification
-- **Low battery protection** — Suspends closed-lid mode below 10% battery
-- **Clean shutdown** — Always restores normal sleep on quit, crash, or signal
-
-## How Detection Works
-
-Every 5 seconds, the app checks two signals:
-
-1. **Process-level** — Finds running `claude` processes, checks CPU usage, and inspects network connections. High CPU or active connections with moderate CPU means Claude is working.
-
-2. **File-level** — Watches `~/.claude/tasks/` for recent modifications. Catches tool-execution phases where the API connection may be momentarily quiet.
-
-Both signals must go quiet before the sleep lock is released.
-
-## Menu Bar
-
-| Icon | Meaning |
-|------|---------|
-| **bolt** (animated) | Claude is working — Mac is being kept awake |
-| **lock.laptop** | Closed-lid mode enabled |
-| **moon.zzz** | Idle — no active Claude Code sessions |
-| **warning** | Scan issue — holding lock during grace period |
-
-The menu shows live status: process state, active sessions, closed-lid state, session cost for today/week, and last check time.
+| | |
+|---|---|
+| **Task completion alerts** | Notification + sound when Claude finishes, with duration and cost summary |
+| **Overnight mode** | Unattended multi-hour sessions with auto-disable after 12h |
+| **Low battery protection** | Suspends closed-lid mode below 10% to conserve power |
+| **Clean shutdown** | Always restores normal sleep on quit, crash, or signal |
+| **Runs entirely locally** | No telemetry, no network calls, no account required |
 
 ## Closed-Lid Mode
 
@@ -79,7 +57,7 @@ The standout feature. Your MacBook stays awake with the lid shut while Claude is
 
 On first launch, you'll be prompted to install a small privileged helper (requires admin password). You can skip this — the app still prevents idle sleep, just not lid-close sleep. Install or remove it any time from the menu.
 
-**How it works:** A shell script toggles `pmset disablesleep`, authorized via a scoped sudoers entry for your user only.
+**How it works:** A shell script toggles `pmset disablesleep`, authorized via a scoped sudoers entry for your user only. Lid state is detected via the IOKit hardware clamshell sensor, so it works reliably regardless of display power settings.
 
 **Thermal note:** With the lid closed, cooling is reduced. Claude Code tasks are mostly network I/O, but use a hard surface or vertical stand for extended sessions.
 
@@ -95,6 +73,7 @@ The app parses Claude Code's session logs (`~/.claude/projects/`) to estimate AP
 
 - **Cost today** with session count
 - **Cost this week** (rolling 7 days)
+- **Cost by project** in a submenu
 
 Pricing covers Opus, Sonnet, and Haiku model families including cache read/write tokens. Each message is costed using its own model, so sessions that mix models (e.g., Opus with Haiku subagents) get accurate per-model pricing. Costs refresh every 30 seconds.
 
@@ -110,6 +89,30 @@ For unattended multi-hour sessions. Enable from the menu before you leave.
 - Sends a summary notification with duration, active/idle breakdown, and transition count
 
 Previous settings are restored when overnight mode ends.
+
+## Menu Bar
+
+| Icon | Meaning |
+|------|---------|
+| Animated bolt | Claude is working — Mac is being kept awake |
+| Padlock on laptop | Closed-lid mode enabled, waiting for activity |
+| Moon with zzz | Idle — no active Claude Code sessions |
+| Warning triangle | Scan issue — holding lock during grace period |
+
+The menu shows live status: process state, active sessions, closed-lid state, session cost for today/week, and last check time.
+
+<details>
+<summary>How detection works</summary>
+
+Every 5 seconds, the app checks two signals:
+
+1. **Process-level** — Finds running `claude` processes, checks CPU usage, and inspects network connections. High CPU or active connections with moderate CPU means Claude is working.
+
+2. **File-level** — Watches `~/.claude/tasks/` for recent modifications. Catches tool-execution phases where the API connection may be momentarily quiet.
+
+Both signals must go quiet before the sleep lock is released.
+
+</details>
 
 ## Configuration
 
@@ -133,20 +136,14 @@ Release build:
 
 This builds the binary, creates a signed `.app` bundle, generates a zip archive, computes the SHA256, and updates the Homebrew cask formula.
 
-## Uninstall
-
-```bash
-brew uninstall claude-caffeine
-```
-
-If you installed the closed-lid helper, remove it first via **Closed-Lid Mode > Uninstall Helper** in the menu bar, or manually:
-
-```bash
-sudo rm /private/etc/sudoers.d/claude_caffeine
-rm -rf ~/Library/ClaudeCaffeine
-```
-
 ## Changelog
+
+### v1.2.2
+
+- **Closed-lid popover redesign** — Duration is now displayed in large bold text so it's immediately readable at a glance.
+- **Improved duration formatting** — Shows "15 sec", "9 mins 11 sec", or "2 hours 13 mins" instead of abbreviated units.
+- **Lower summary threshold** — Popover now triggers after 10 seconds of closed-lid activity (was 60 seconds).
+- **IOKit lid detection** — Uses the hardware clamshell sensor (`AppleClamshellState`) instead of CoreGraphics display lists, fixing reliability issues when `pmset disablesleep` is active.
 
 ### v1.2.1
 
@@ -175,6 +172,19 @@ rm -rf ~/Library/ClaudeCaffeine
 ### v1.0.0
 
 - Initial release: sleep prevention, closed-lid mode, smart detection, overnight mode, low battery protection, clean shutdown.
+
+## Uninstall
+
+```bash
+brew uninstall claude-caffeine
+```
+
+If you installed the closed-lid helper, remove it first via **Closed-Lid Mode > Uninstall Helper** in the menu bar, or manually:
+
+```bash
+sudo rm /private/etc/sudoers.d/claude_caffeine
+rm -rf ~/Library/ClaudeCaffeine
+```
 
 ## License
 
