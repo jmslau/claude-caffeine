@@ -1,10 +1,11 @@
 # Claude Caffeine 
 ![Claude Caffeine](assets/icon-small.png)
 
-**Problem:** You start a Claude Code task — refactor, tests, a long build. You close the lid and walk away. You come back to a half-finished job because macOS put your Mac to sleep.
+**Problem:** You start a Claude Code task or an army of Claude Code agents, then you realize you need to step away. You can't close your Mac laptop because it would stop Claude from running. Do you walk around with your laptop open or stop Claude?
 
 **Solution:** Claude Caffeine is a lightweight menu bar app that keeps your Mac awake *only* while Claude Code is working — including with the **lid closed**. The moment Claude goes idle, normal sleep resumes. No config, no account, runs entirely locally.
 
+![App icon](assets/claude-caffeine.png)
 ---
 
 ## Key Features
@@ -20,7 +21,6 @@ Plus: task-completion notifications with sound, overnight mode for long unattend
 
 ## Install
 
-![App icon](assets/claude-caffeine.png)
 
 **macOS 13 (Ventura) or later.**
 
