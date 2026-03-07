@@ -8,16 +8,13 @@ You kick off a Claude Code task — a multi-file refactor, a test suite, a long 
 
 ```bash
 brew install --cask jmslau/tap/claude-caffeine
-```
-
-On first launch, macOS may show a Gatekeeper warning (the app isn't notarized yet). To clear it:
-
-```bash
 xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app
 open /Applications/Claude\ Caffeine.app
 ```
 
-Or go to **System Settings > Privacy & Security** and click **"Open Anyway"**.
+The `xattr` command clears the macOS Gatekeeper warning (the app isn't notarized yet). Alternatively, go to **System Settings > Privacy & Security** and click **"Open Anyway"** after the first launch attempt.
+
+If a `brew upgrade` fails with "App source is not there", run `brew uninstall --cask claude-caffeine` first, then reinstall.
 
 Requires macOS 13 (Ventura) or later.
 
