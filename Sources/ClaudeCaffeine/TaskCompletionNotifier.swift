@@ -7,9 +7,13 @@ final class TaskCompletionNotifier {
     var notificationsEnabled = true
     var soundEnabled = true
 
-    private var wasActivelyWorking = false
+    private var consecutiveActivePolls = 0
     private var activeSessionStart: Date?
     private var sessionCostAtStart: Double = 0
+
+    /// Minimum consecutive active polls before a completion notification can fire.
+    /// Prevents spurious notifications from brief detection blips.
+    private let requiredActivePolls = 3
 
     private let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
@@ -24,21 +28,30 @@ final class TaskCompletionNotifier {
     }
 
     func update(isActivelyWorking: Bool, currentCost: Double = 0) {
-        let transitionedToIdle = wasActivelyWorking && !isActivelyWorking
-
-        if isActivelyWorking && !wasActivelyWorking {
-            activeSessionStart = Date()
-            sessionCostAtStart = currentCost
+        if isActivelyWorking {
+            if consecutiveActivePolls == 0 {
+                activeSessionStart = Date()
+                sessionCostAtStart = currentCost
+            }
+            consecutiveActivePolls += 1
+            return
         }
 
-        if transitionedToIdle {
-            let costDelta = currentCost - sessionCostAtStart
-            notifyTaskCompletion(sessionCost: costDelta)
+        // Claude appears idle this poll
+        guard consecutiveActivePolls > 0 else { return }
+        let hadEnoughActivePolls = consecutiveActivePolls >= requiredActivePolls
+        consecutiveActivePolls = 0
+
+        guard hadEnoughActivePolls else {
             activeSessionStart = nil
             sessionCostAtStart = 0
+            return
         }
 
-        wasActivelyWorking = isActivelyWorking
+        let costDelta = currentCost - sessionCostAtStart
+        notifyTaskCompletion(sessionCost: costDelta)
+        activeSessionStart = nil
+        sessionCostAtStart = 0
     }
 
     // MARK: - Private

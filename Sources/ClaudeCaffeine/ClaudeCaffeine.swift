@@ -11,6 +11,35 @@ private let logger = Logger(subsystem: "com.jmslau.claudecaffeine", category: "a
 // and a simple property write, minimising the race window.
 nonisolated(unsafe) private var sharedClosedDisplayManager: ClosedDisplayManager?
 
+/// How long to keep the Mac awake after Claude goes idle.
+enum KeepAwakeDuration: TimeInterval, CaseIterable {
+    case off = 0
+    case oneHour = 3600
+    case twoHours = 7200
+    case fourHours = 14400
+    case twelveHours = 43200
+    case forever = -1
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .oneHour: return "1 Hour"
+        case .twoHours: return "2 Hours"
+        case .fourHours: return "4 Hours"
+        case .twelveHours: return "12 Hours"
+        case .forever: return "Forever"
+        }
+    }
+
+    /// Whether the Mac should stay awake given idle start time and current time.
+    static func shouldKeepAwake(duration: KeepAwakeDuration, idleSince: Date?, now: Date) -> Bool {
+        guard duration != .off, let idleSince else { return false }
+        if duration == .forever { return true }
+        let elapsed = now.timeIntervalSince(idleSince)
+        return elapsed < duration.rawValue
+    }
+}
+
 @main
 struct ClaudeCaffeine {
     static func main() {
@@ -39,11 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let activityMonitor = ClaudeTaskActivityMonitor()
     private let sleepAssertion = SleepAssertionManager()
     private let closedDisplayManager = ClosedDisplayManager()
+    private let brightnessManager = DisplayBrightnessManager()
     private let powerSourceMonitor = PowerSourceMonitor()
     private let batteryMonitor = BatteryMonitor()
     private let taskCompletionNotifier = TaskCompletionNotifier()
     private let menuBarAnimator = MenuBarAnimator()
-    private let overnightMode = OvernightMode()
     private let costEstimator = SessionCostEstimator()
     #if DEBUG
     private let closedLidReporter = ClosedLidReporter(minimumDuration: 1)
@@ -57,7 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var closedLidEnabled = true
     private var showCostMeter = true
     private var lowBatteryNotified = false
-    private var preOvernightClosedLid = true
+
+    private var keepAwakeDuration: KeepAwakeDuration = .off
+    /// When Claude last transitioned from active to idle (for countdown).
+    private var idleSince: Date?
 
     private var statusItem: NSStatusItem?
     private var statusLineItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -90,12 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         action: #selector(toggleSound),
         keyEquivalent: ""
     )
-    private var overnightToggleItem = NSMenuItem(
-        title: "Enable Overnight Mode",
-        action: #selector(toggleOvernightMode),
-        keyEquivalent: ""
-    )
-    private var overnightStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var keepAwakeMenu = NSMenu()
+    private var keepAwakeStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var costMeterToggleItem = NSMenuItem(
         title: "Show Cost Meter (Estimates based on API pricing)",
         action: #selector(toggleCostMeter),
@@ -141,10 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         pollTimer?.invalidate()
         pollTask?.cancel()
-        if overnightMode.isEnabled {
-            _ = overnightMode.stop()
-        }
         menuBarAnimator.stop()
+        brightnessManager.restore()
         sleepAssertion.releaseAll()
         closedDisplayManager.forceDisable()
         powerSourceMonitor.stop()
@@ -200,20 +226,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc
-    private func toggleOvernightMode() {
-        if overnightMode.isEnabled {
-            let summary = overnightMode.stop()
-            overnightMode.sendSummaryNotification(summary: summary, reason: "manually stopped")
-            closedLidEnabled = preOvernightClosedLid
-        } else {
-            preOvernightClosedLid = closedLidEnabled
-            if HelperInstaller.isInstalled {
-                closedLidEnabled = true
-            }
-            overnightMode.start()
+    private func selectKeepAwake(_ sender: NSMenuItem) {
+        guard let duration = sender.representedObject as? KeepAwakeDuration else { return }
+        keepAwakeDuration = duration
+        if duration == .off {
+            idleSince = nil
         }
-        updateOvernightMenu()
-        updateClosedLidMenu()
+        updateKeepAwakeMenu()
         refresh()
     }
 
@@ -310,15 +329,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.setSubmenu(notificationsMenu, for: notificationsParent)
         menu.addItem(notificationsParent)
 
-        let overnightMenu = NSMenu()
-        overnightToggleItem.target = self
-        overnightMenu.addItem(overnightToggleItem)
-        overnightStatusItem.isEnabled = false
-        overnightStatusItem.isHidden = true
-        overnightMenu.addItem(overnightStatusItem)
-        let overnightParent = NSMenuItem(title: "Overnight Mode", action: nil, keyEquivalent: "")
-        menu.setSubmenu(overnightMenu, for: overnightParent)
-        menu.addItem(overnightParent)
+        for duration in KeepAwakeDuration.allCases {
+            let item = NSMenuItem(title: duration.label, action: #selector(selectKeepAwake(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = duration
+            keepAwakeMenu.addItem(item)
+        }
+        keepAwakeMenu.addItem(.separator())
+        keepAwakeStatusItem.isEnabled = false
+        keepAwakeStatusItem.isHidden = true
+        keepAwakeMenu.addItem(keepAwakeStatusItem)
+        let keepAwakeParent = NSMenuItem(title: "Keep Awake After Idle", action: nil, keyEquivalent: "")
+        menu.setSubmenu(keepAwakeMenu, for: keepAwakeParent)
+        menu.addItem(keepAwakeParent)
+        updateKeepAwakeMenu()
 
         menu.addItem(.separator())
 
@@ -340,6 +364,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.representedObject = DebugReportBox(ClosedLidReport(duration: duration, didSleepAfterIdle: didSleep))
             debugMenu.addItem(item)
         }
+        debugMenu.addItem(.separator())
+        let notifItem = NSMenuItem(title: "Play Completion Notification", action: #selector(debugPlayNotification), keyEquivalent: "")
+        notifItem.target = self
+        debugMenu.addItem(notifItem)
+        let soundItem = NSMenuItem(title: "Play Completion Sound", action: #selector(debugPlaySound), keyEquivalent: "")
+        soundItem.target = self
+        debugMenu.addItem(soundItem)
+        debugMenu.addItem(.separator())
+        let dimItem = NSMenuItem(title: "Dim Screen", action: #selector(debugDimScreen), keyEquivalent: "")
+        dimItem.target = self
+        debugMenu.addItem(dimItem)
+        let restoreItem = NSMenuItem(title: "Restore Screen", action: #selector(debugRestoreScreen), keyEquivalent: "")
+        restoreItem.target = self
+        debugMenu.addItem(restoreItem)
         let debugParent = NSMenuItem(title: "Debug", action: nil, keyEquivalent: "")
         menu.setSubmenu(debugMenu, for: debugParent)
         menu.addItem(debugParent)
@@ -365,6 +403,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let box = sender.representedObject as? DebugReportBox else { return }
         showPopover(report: box.report)
     }
+
+    @objc
+    private func debugPlayNotification() {
+        let title = "Claude Code finished working"
+        let body = "Task completed — 3m 42s · $0.18."
+
+        if Bundle.main.bundleIdentifier != nil,
+           Bundle.main.bundlePath.hasSuffix(".app") {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: UUID().uuidString,
+                content: content,
+                trigger: nil
+            )
+            UNUserNotificationCenter.current().add(request)
+        } else {
+            // Fallback for swift run (no bundle identifier)
+            NSSound(named: "Glass")?.play()
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = body
+            alert.alertStyle = .informational
+            alert.runModal()
+        }
+    }
+
+    @objc
+    private func debugPlaySound() {
+        NSSound(named: "Glass")?.play()
+    }
+
+    @objc
+    private func debugDimScreen() {
+        brightnessManager.dim()
+        print("[debug] Screen dimmed (isDimmed=\(brightnessManager.isDimmed))")
+    }
+
+    @objc
+    private func debugRestoreScreen() {
+        brightnessManager.restore()
+        print("[debug] Screen restored (isDimmed=\(brightnessManager.isDimmed))")
+    }
     #endif
 
     private func updateClosedLidMenu() {
@@ -376,15 +459,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         uninstallHelperItem.isHidden = !installed
     }
 
-    private func updateOvernightMenu() {
-        let enabled = overnightMode.isEnabled
-        overnightToggleItem.state = enabled ? .on : .off
-        overnightToggleItem.title = enabled ? "Disable Overnight Mode" : "Enable Overnight Mode"
-        if let status = overnightMode.statusText {
-            overnightStatusItem.title = status
-            overnightStatusItem.isHidden = false
+    private func updateKeepAwakeMenu() {
+        for item in keepAwakeMenu.items where item.representedObject is KeepAwakeDuration {
+            let duration = item.representedObject as! KeepAwakeDuration
+            item.state = duration == keepAwakeDuration ? .on : .off
+        }
+        if let idleSince, keepAwakeDuration != .off, keepAwakeDuration != .forever {
+            let elapsed = Date().timeIntervalSince(idleSince)
+            let remaining = keepAwakeDuration.rawValue - elapsed
+            if remaining > 0 {
+                let text = durationText(for: remaining)
+                keepAwakeStatusItem.title = "Idle — releasing lock in \(text)"
+                keepAwakeStatusItem.isHidden = false
+            } else {
+                keepAwakeStatusItem.isHidden = true
+            }
         } else {
-            overnightStatusItem.isHidden = true
+            keepAwakeStatusItem.isHidden = true
         }
     }
 
@@ -476,11 +567,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             processText = "Process: not running"
         }
 
+        #if DEBUG
+        do {
+            let lidState = isLidClosed ? "closed" : "open"
+            let sessionCount = activeSessions.count
+            var log = "[poll] lid=\(lidState) sessions=\(sessionCount) procs=\(proc.pids.count) active=\(isActivelyWorking)"
+            if proc.isRunning {
+                log += " cpu=\(String(format: "%.1f", proc.cpuUsage))% net=\(proc.hasActiveConnections)"
+            }
+            for s in activeSessions {
+                let idle = String(format: "%.0f", s.idleFor)
+                log += "\n  session \(s.sessionID.prefix(8)): idle \(idle)s"
+            }
+            print(log)
+        }
+        #endif
+
+        // Track idle-since for keep-awake countdown
+        if isActivelyWorking {
+            idleSince = nil
+        } else if idleSince == nil {
+            idleSince = now
+        }
+
+        let shouldKeepAwake = isActivelyWorking || shouldKeepAwakeWhileIdle(now: now)
+
         switch snapshot.status {
         case .ok:
             lastSuccessfulPollAt = now
-            if isActivelyWorking {
-                sleepAssertion.holdIfNeeded(reason: "Keeping Mac awake while Claude Code is actively working")
+            if shouldKeepAwake {
+                sleepAssertion.holdIfNeeded(reason: isActivelyWorking
+                    ? "Keeping Mac awake while Claude Code is actively working"
+                    : "Keeping Mac awake after idle (keep-awake timer)")
             } else {
                 sleepAssertion.releaseAll()
             }
@@ -488,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionsText = "Active sessions: \(activeSessions.count) (oldest idle \(oldestIdleText(from: activeSessions)))"
         case .tasksRootMissing:
             hasWarning = true
-            if proc.isActivelyWorking {
+            if shouldKeepAwake {
                 sleepAssertion.holdIfNeeded(reason: "Keeping Mac awake while Claude Code is actively working")
                 statusText = "tasks folder missing; awake lock active (process detected)"
             } else {
@@ -497,7 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionsText = "Active sessions: unknown (missing ~/.claude/tasks)"
         case .ioError:
             hasWarning = true
-            if isActivelyWorking {
+            if shouldKeepAwake {
                 sleepAssertion.holdIfNeeded(reason: "Keeping Mac awake while Claude Code is actively working")
                 statusText = "scan warning; awake lock active"
                 sessionsText = activeSessions.isEmpty
@@ -509,13 +627,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        applyClosedLidState(hasActiveSessions: isActivelyWorking)
+        applyClosedLidState(hasActiveSessions: shouldKeepAwake)
 
         statusLineItem.title = "Status: \(statusText)"
         processLineItem.title = processText
         sessionsLineItem.title = sessionsText
         lastCheckLineItem.title = "Last check: \(DateFormatter.localizedString(from: now, dateStyle: .none, timeStyle: .medium))"
         updateClosedLidMenu()
+        updateKeepAwakeMenu()
         updateCostDisplay()
         let todayCost = lastCostSnapshot?.todayCost ?? 0
         menuBarAnimator.update(isActive: isActivelyWorking, todayCost: todayCost)
@@ -526,24 +645,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         taskCompletionNotifier.update(isActivelyWorking: isActivelyWorking, currentCost: todayCost)
 
-        if overnightMode.isEnabled {
-            overnightMode.update(isActivelyWorking: isActivelyWorking, now: now)
-            updateOvernightMenu()
-            if !overnightMode.isEnabled {
-                closedLidEnabled = preOvernightClosedLid
-                updateClosedLidMenu()
-            }
-        }
-
         // Poll-based lid detection fallback: catches lid open/close even when
         // notifications don't fire (e.g. with pmset disablesleep active).
         let lidClosed = isLidClosed
         if lidWasClosed && !lidClosed {
             lidWasClosed = false
+            brightnessManager.restore()
             closedLidReporter.snapshotActive()
             showClosedLidReportIfNeeded()
-        } else if lidClosed {
+        } else if lidClosed && closedDisplayManager.isEnabled {
             lidWasClosed = true
+            brightnessManager.dim()
         }
     }
 
@@ -585,6 +697,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleScreensSleep() {
         if isLidClosed {
             lidWasClosed = true
+            if closedDisplayManager.isEnabled {
+                brightnessManager.dim()
+            }
             logger.info("Lid close detected (clamshell state at screen sleep)")
         }
     }
@@ -597,6 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard lidWasClosed else { return }
         lidWasClosed = false
+        brightnessManager.restore()
         logger.info("Lid open detected, activeStart=\(self.closedLidReporter.activeStart != nil), pending=\(self.closedLidReporter.pendingDuration != nil)")
         closedLidReporter.snapshotActive()
         showClosedLidReportIfNeeded()
@@ -720,6 +836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
                 closedDisplayManager.disable()
+                brightnessManager.restore()
             }
             closedLidLineItem.title = "Closed-lid: disabled"
             return
@@ -729,6 +846,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
                 closedDisplayManager.disable()
+                brightnessManager.restore()
             }
             if !lowBatteryNotified {
                 lowBatteryNotified = true
@@ -749,12 +867,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if isLidClosed {
                 closedLidReporter.recordStart()
+                brightnessManager.dim()
             }
             closedLidLineItem.title = "Closed-lid: active (preventing sleep)"
         } else {
             if closedDisplayManager.isEnabled {
                 closedLidReporter.recordEnd()
                 closedDisplayManager.disable()
+                brightnessManager.restore()
             }
             closedLidLineItem.title = "Closed-lid: standby (no active sessions)"
         }
@@ -841,6 +961,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func durationText(for duration: TimeInterval) -> String {
         idleFormatter.string(from: max(duration, 0)) ?? "0s"
+    }
+
+    private func shouldKeepAwakeWhileIdle(now: Date) -> Bool {
+        KeepAwakeDuration.shouldKeepAwake(duration: keepAwakeDuration, idleSince: idleSince, now: now)
     }
 
     private func updateMenuBarIcon(isKeepingAwake: Bool, closedLidActive: Bool, hasWarning: Bool) {

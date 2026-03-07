@@ -15,7 +15,7 @@
 | **Close the lid, keep Claude running** | Close your MacBook and walk away. Claude keeps working. When Claude goes idle, your Mac will go to sleep. When you open the lid, a popover shows how long it ran while closed. |
 | **See your API spend at a glance** | Menu bar shows cost today and this week; submenu breaks it down by project. For **API users only** (pay-per-token); estimates use Anthropic’s published rates. |
 
-Plus: task-completion notifications with sound, overnight mode for long unattended runs, low-battery protection, and clean shutdown so sleep always restores on quit.
+Plus: task-completion notifications with sound, configurable keep-awake timer for Claude Remote sessions, low-battery protection, and clean shutdown so sleep always restores on quit.
 
 ---
 
@@ -32,7 +32,15 @@ open /Applications/Claude\ Caffeine.app
 
 The `xattr` command clears the macOS Gatekeeper warning (the app isn’t notarized yet). Or go to **System Settings → Privacy & Security** and click **Open Anyway** after the first launch attempt.
 
-If `brew upgrade` fails with "App source is not there", run `brew uninstall --cask claude-caffeine` then reinstall.
+### Upgrade
+
+```bash
+brew upgrade --cask jmslau/tap/claude-caffeine
+xattr -d com.apple.quarantine /Applications/Claude\ Caffeine.app
+open /Applications/Claude\ Caffeine.app
+```
+
+If `brew upgrade` fails with "App source is not there", run `brew uninstall --cask claude-caffeine` then reinstall with the install command above.
 
 <details>
 <summary>Build from source</summary>
@@ -97,16 +105,20 @@ You can hide the cost meter from the menu: **Show Cost Meter** toggle.
 
 ---
 
-## Overnight mode
+## Keep Awake After Idle
 
-For unattended multi-hour sessions. Turn it on from the menu before you leave.
+By default, your Mac sleeps as soon as Claude goes idle. If you're using **Claude Remote** (controlling Claude Code from your phone), you may want the Mac to stay awake longer — or indefinitely.
 
-- Keeps closed-lid mode on  
-- Logs active vs idle time  
-- Auto-disables after 12 hours  
-- Sends a summary notification with duration and breakdown  
+From the menu, choose **Keep Awake After Idle** and pick a duration:
 
-Your previous settings are restored when it ends.
+| Option | Use case |
+|--------|----------|
+| **Off** (default) | Mac sleeps when Claude goes idle |
+| **1–4 Hours** | Lid closed in your backpack; saves battery |
+| **12 Hours** | Overnight unattended session |
+| **Forever** | Plugged in at home, using Claude Remote all day |
+
+The menu shows a countdown while idle. Low-battery protection still applies regardless of the setting.
 
 ---
 
@@ -125,7 +137,8 @@ The menu shows live status: process state, active sessions, closed-lid state, to
 
 ## Configuration
 
-- **Show Cost Meter** — Show or hide the cost display in the menu bar (on by default).  
+- **Keep Awake After Idle** — How long to hold the sleep lock after Claude goes idle (Off, 1h, 2h, 4h, 12h, Forever).
+- **Show Cost Meter** — Show or hide the cost display in the menu bar (on by default).
 - **Notifications** — Toggle completion notifications and sound separately.
 
 ---
@@ -147,6 +160,11 @@ Release build and cask update:
 ---
 
 ## Changelog
+
+### v1.3.0
+
+- **Keep Awake After Idle** — Designed for Claude Remote sessions, you can now keep your computer awake even after Claude goes idle. Configurable timer (1h, 2h, 4h, 12h, Forever) to hold the sleep lock after Claude becomes idle. 
+- **Auto-dim screen when lid is closed** - Save more battery. While Claude Caffeine will keep your laptop awake to run Claude, it will auto dim the screen when the lid is closed to save battery. When you open your lid again, it will automatically resume to the previous brightness.
 
 ### v1.2.2
 
@@ -180,7 +198,7 @@ Release build and cask update:
 
 ### v1.0.0
 
-- Initial release: sleep prevention, closed-lid mode, detection, overnight mode, low battery protection, clean shutdown.
+- Initial release: sleep prevention, closed-lid mode, detection, low battery protection, clean shutdown.
 
 ---
 
