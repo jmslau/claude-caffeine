@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let brightnessManager = DisplayBrightnessManager()
     private let powerSourceMonitor = PowerSourceMonitor()
     private let batteryMonitor = BatteryMonitor()
+    private let thermalMonitor = ThermalMonitor()
     private let taskCompletionNotifier = TaskCompletionNotifier()
     private let menuBarAnimator = MenuBarAnimator()
     private let costEstimator = SessionCostEstimator()
@@ -590,7 +591,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             idleSince = now
         }
 
-        let shouldKeepAwake = isActivelyWorking || shouldKeepAwakeWhileIdle(now: now)
+        let thermalCritical = thermalMonitor.isCritical
+        let shouldKeepAwake = !thermalCritical && (isActivelyWorking || shouldKeepAwakeWhileIdle(now: now))
 
         switch snapshot.status {
         case .ok:
@@ -602,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 sleepAssertion.releaseAll()
             }
-            statusText = sleepAssertion.isHeld ? "awake lock active" : "no lock"
+            statusText = thermalCritical ? "no lock (thermal critical)" : (sleepAssertion.isHeld ? "awake lock active" : "no lock")
             sessionsText = "Active sessions: \(activeSessions.count) (oldest idle \(oldestIdleText(from: activeSessions)))"
         case .tasksRootMissing:
             hasWarning = true
@@ -839,6 +841,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 brightnessManager.restore()
             }
             closedLidLineItem.title = "Closed-lid: disabled"
+            return
+        }
+
+        if thermalMonitor.isCritical {
+            if closedDisplayManager.isEnabled {
+                closedLidReporter.recordEnd()
+                closedDisplayManager.disable()
+                brightnessManager.restore()
+            }
+            closedLidLineItem.title = "Closed-lid: suspended (thermal critical)"
             return
         }
 

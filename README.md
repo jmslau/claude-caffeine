@@ -1,7 +1,7 @@
 # Claude Caffeine 
 ![Claude Caffeine](assets/icon-small.png)
 
-**Problem:** You start a Claude Code task or an army of Claude Code agents, then you realize you need to step away. You can't close your Mac laptop because it would stop Claude from running. Do you walk around with your laptop open or stop Claude?
+**Problem:** You start a Claude Code task or an army of Claude Code agents, then you realize you need to step away. You can't close your Mac laptop because it would stop Claude from running. You have 2 bad options - do you walk around with your laptop open or do you stop Claude?
 
 **Solution:** Claude Caffeine is a lightweight menu bar app that keeps your Mac awake *only* while Claude Code is working — including with the **lid closed**. The moment Claude goes idle, normal sleep resumes. No config, no account, runs entirely locally.
 
@@ -160,6 +160,10 @@ Release build and cask update:
 ---
 
 ## Changelog
+
+### v1.3.1
+
+- **Thermal protection** — Releases the sleep lock and suspends closed-lid mode when macOS reports a critical thermal state, letting your Mac cool down automatically.
 
 ### v1.3.0
 
