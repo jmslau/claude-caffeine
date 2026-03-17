@@ -10,10 +10,16 @@ final class TaskCompletionNotifier {
     private var consecutiveActivePolls = 0
     private var activeSessionStart: Date?
     private var sessionCostAtStart: Double = 0
+    private var hadFileActivityDuringSession = false
+    private var lastNotificationTime: Date?
 
     /// Minimum consecutive active polls before a completion notification can fire.
-    /// Prevents spurious notifications from brief detection blips.
-    private let requiredActivePolls = 3
+    /// Set to 4 (20 seconds at 5s polling) to allow the CPU smoothing window to
+    /// stabilize before a transition can trigger a notification.
+    private let requiredActivePolls = 4
+
+    /// Suppress rapid-fire notifications caused by residual state oscillation.
+    let cooldownInterval: TimeInterval = 60
 
     private let durationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
@@ -23,21 +29,31 @@ final class TaskCompletionNotifier {
         return formatter
     }()
 
+    /// Injectable clock for testing cooldown behavior.
+    var now: () -> Date = { Date() }
+
     init() {
         requestNotificationPermission()
     }
 
-    func update(isActivelyWorking: Bool, currentCost: Double = 0) {
+    /// Called every poll with the smoothed activity state.
+    ///
+    /// - Parameters:
+    ///   - isActivelyWorking: Smoothed active/idle signal from `SmoothedActivityTracker`.
+    ///   - hasFileActivity: Whether `~/.claude/tasks/` had recent file modifications this poll.
+    ///   - currentCost: Cumulative session cost for display in the notification.
+    func update(isActivelyWorking: Bool, hasFileActivity: Bool = false, currentCost: Double = 0) {
         if isActivelyWorking {
             if consecutiveActivePolls == 0 {
                 activeSessionStart = Date()
                 sessionCostAtStart = currentCost
+                hadFileActivityDuringSession = false
             }
+            if hasFileActivity { hadFileActivityDuringSession = true }
             consecutiveActivePolls += 1
             return
         }
 
-        // Claude appears idle this poll
         guard consecutiveActivePolls > 0 else { return }
         let hadEnoughActivePolls = consecutiveActivePolls >= requiredActivePolls
         consecutiveActivePolls = 0
@@ -45,13 +61,31 @@ final class TaskCompletionNotifier {
         guard hadEnoughActivePolls else {
             activeSessionStart = nil
             sessionCostAtStart = 0
+            hadFileActivityDuringSession = false
+            return
+        }
+
+        guard hadFileActivityDuringSession else {
+            activeSessionStart = nil
+            sessionCostAtStart = 0
+            hadFileActivityDuringSession = false
+            return
+        }
+
+        let currentTime = now()
+        if let last = lastNotificationTime, currentTime.timeIntervalSince(last) < cooldownInterval {
+            activeSessionStart = nil
+            sessionCostAtStart = 0
+            hadFileActivityDuringSession = false
             return
         }
 
         let costDelta = currentCost - sessionCostAtStart
         notifyTaskCompletion(sessionCost: costDelta)
+        lastNotificationTime = currentTime
         activeSessionStart = nil
         sessionCostAtStart = 0
+        hadFileActivityDuringSession = false
     }
 
     // MARK: - Private

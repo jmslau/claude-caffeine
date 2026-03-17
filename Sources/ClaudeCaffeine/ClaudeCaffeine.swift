@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let batteryMonitor = BatteryMonitor()
     private let thermalMonitor = ThermalMonitor()
     private let taskCompletionNotifier = TaskCompletionNotifier()
+    private let smoothedActivityTracker = SmoothedActivityTracker()
     private let menuBarAnimator = MenuBarAnimator()
     private let costEstimator = SessionCostEstimator()
     #if DEBUG
@@ -645,7 +646,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             closedLidActive: closedLidEnabled,
             hasWarning: hasWarning
         )
-        taskCompletionNotifier.update(isActivelyWorking: isActivelyWorking, currentCost: todayCost)
+        let hasFileActivity = !activeSessions.isEmpty
+        let smoothedState = smoothedActivityTracker.update(
+            processStatus: proc,
+            hasFileActivity: hasFileActivity
+        )
+        let smoothedActive = smoothedState == .active
+        taskCompletionNotifier.update(
+            isActivelyWorking: smoothedActive,
+            hasFileActivity: hasFileActivity,
+            currentCost: todayCost
+        )
 
         // Poll-based lid detection fallback: catches lid open/close even when
         // notifications don't fire (e.g. with pmset disablesleep active).

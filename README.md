@@ -161,6 +161,10 @@ Release build and cask update:
 
 ## Changelog
 
+### v1.3.2
+
+- **Smarter completion notifications** — Reduced false-positive "task completed" sounds caused by CPU fluctuations when Claude is idle. A new multi-layer detection system uses CPU smoothing (3-sample sliding window), hysteresis with separate enter/exit thresholds, file-activity corroboration, and a 60-second cooldown between notifications.
+
 ### v1.3.1
 
 - **Thermal protection** — Releases the sleep lock and suspends closed-lid mode when macOS reports a critical thermal state, letting your Mac cool down automatically.
