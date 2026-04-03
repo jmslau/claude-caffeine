@@ -12,9 +12,7 @@ ClaudeCaffeine is a macOS menu bar app (Swift 6.2, Swift Package Manager) that p
 ```
 ClaudeCaffeine.swift          Entry point + AppDelegate (menu bar UI, poll loop, state machine)
     |
-    +-- ClaudeTaskActivityMonitor  Polls ~/.claude/tasks/ for file modifications
-    |       |
-    |       +-- ClaudeProcessDetector  Finds `claude` PIDs, checks lsof for API connections, reads CPU
+    +-- ClaudeHookMonitor          Scans ~/.claude/caffeine_sessions/ for active session files
     |
     +-- SleepAssertionManager      Holds/releases IOKit power assertions (idle sleep + display sleep)
     |
@@ -31,41 +29,41 @@ ClaudeCaffeine.swift          Entry point + AppDelegate (menu bar UI, poll loop,
 
 ## Detection Model
 
-The app uses a dual-signal approach, polled every 5 seconds:
+The app uses a reactive, session-aware approach:
 
-1. **Process detection** (`ClaudeProcessDetector`) — Finds running `claude` processes via `ps`, checks for `ESTABLISHED` network connections via `lsof`, and reads CPU usage. A process with active connections OR >5% CPU is considered "actively working."
+1. **Claude Code Hooks**: Claude Code is configured to trigger `active.js` and `idle.js` scripts on specific events (`UserPromptSubmit`, `PreToolUse`, `Stop`, `Elicitation`, etc.). These scripts manage session-specific state files in `~/.claude/caffeine_sessions/`.
 
-2. **File activity** (`ClaudeTaskActivityMonitor`) — Scans `~/.claude/tasks/` subdirectories for recent file modifications within the idle threshold. This catches tool-execution phases where the API connection may be momentarily idle.
+2. **Session Monitoring**: `ClaudeHookMonitor` polls the `caffeine_sessions` directory every 5 seconds. If any session files exist, the Mac is kept awake. This supports multiple concurrent terminal sessions and avoids race conditions by using individual files per `session_id`.
 
-Either signal keeps the Mac awake. Both must go quiet before the sleep lock is released.
+3. **Auto-Resume Wrapper**: An experimental Python wrapper tracks "hit your limit" messages and maintains its own session file while waiting for a reset, ensuring the Mac stays awake specifically during the wait timer.
 
 ## Key Design Decisions
 
 - **No third-party dependencies.** The entire app is built on Foundation, AppKit, IOKit, and UserNotifications. This keeps the binary small and the attack surface minimal.
-- **Sendable-first concurrency.** `ClaudeProcessDetector` and `ClaudeTaskActivityMonitor` are `Sendable` structs. The poll runs on a detached `Task` with `.utility` priority, results are applied on `@MainActor`.
+- **Sendable-first concurrency.** `ClaudeHookMonitor` is a `Sendable` actor. The poll runs on a detached `Task` with `.utility` priority, results are applied on `@MainActor`.
 - **Signal handler cleanup.** A `nonisolated(unsafe)` reference to `ClosedDisplayManager` allows SIGTERM/SIGINT/SIGHUP handlers to call `forceDisable()` before exit, ensuring `pmset disablesleep` is always reset.
 - **Immutable data flow.** Poll results are captured in `PollSnapshot` value types. The `AppDelegate` applies state changes based on the snapshot — it never mutates shared state from background threads.
-- **Testability via injection.** `ClosedDisplayManager` accepts a `ShellExecutor` protocol and a `checkHelperInstalled` closure. `ClaudeTaskActivityMonitor` accepts a custom `tasksRootURL` and `detectProcess` closure. Tests use these seams to avoid touching the real filesystem or running privileged commands.
+- **Testability via injection.** `ClosedDisplayManager` accepts a `ShellExecutor` protocol and a `checkHelperInstalled` closure.
 
 ## Source Files
 
 | File | Lines | Role |
 |------|-------|------|
-| `ClaudeCaffeine.swift` | ~540 | App entry point, `AppDelegate`, menu bar UI, poll loop, state transitions |
-| `ClaudeTaskActivityMonitor.swift` | ~160 | Scans `~/.claude/tasks/` for active sessions based on file modification times |
-| `ClaudeProcessDetector.swift` | ~110 | Detects running `claude` processes, checks network connections and CPU usage |
+| `ClaudeCaffeine.swift` | ~1050 | App entry point, `AppDelegate`, menu bar UI, poll loop, state transitions |
+| `ClaudeHookMonitor.swift` | ~50 | Scans `~/.claude/caffeine_sessions/` for active sessions based on hook files |
+| `HookInstaller.swift` | ~120 | Installs/uninstalls Node.js hook helpers and updates `settings.json` |
 | `SleepAssertionManager.swift` | ~70 | Creates/releases `IOPMAssertion` for system and display sleep prevention |
 | `ClosedDisplayManager.swift` | ~120 | State machine for `pmset disablesleep` toggling via privileged helper |
 | `HelperInstaller.swift` | ~155 | Installs/uninstalls the sudoers entry and shell script for closed-lid mode |
 | `BatteryMonitor.swift` | ~50 | Reads battery level and charging state from IOKit power sources |
 | `PowerSourceMonitor.swift` | ~50 | Listens for AC/battery power source changes via `IOPSNotificationCreateRunLoopSource` |
+| `AutoResumeManager.swift` | ~250 | Manages the Python PTY wrapper for limit-aware auto-resuming |
 
 ## Test Files
 
 | File | What it tests |
 |------|---------------|
 | `BatteryMonitorTests.swift` | Battery level reading, low-battery threshold logic |
-| `ClaudeTaskActivityMonitorTests.swift` | Session scanning, idle detection, error handling for missing/broken task dirs |
 | `ClosedDisplayManagerTests.swift` | Enable/disable state machine, helper-not-installed guard, force disable |
 | `HelperInstallerTests.swift` | Script writing, sudoers validation, install/uninstall flows |
 
@@ -94,10 +92,9 @@ swift test            # Run all tests
 
 ### When Adding Features
 
-- Keep detection logic in `ClaudeTaskActivityMonitor` or `ClaudeProcessDetector` — not in `AppDelegate`.
+- Keep detection logic in `ClaudeHookMonitor` — not in `AppDelegate`.
 - Keep UI state updates in `applyPoll()` on `@MainActor`. Don't touch UI from background tasks.
 - If you add a new component, make it injectable for testing (protocol or closure injection, like `ShellExecutor`).
-- The `AppDelegate` is already at ~540 lines. Extract new menu sections or complex logic into separate types if they push it further.
 
 ### Tracking Progress with Beads
 
