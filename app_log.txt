@@ -1,0 +1,2 @@
+[brightness] init: DisplayServices loaded (get=true, set=true)
+[poll] lid=closed active=false

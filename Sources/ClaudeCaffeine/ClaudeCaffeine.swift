@@ -65,7 +65,7 @@ struct ClaudeCaffeine {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let activityMonitor = ClaudeTaskActivityMonitor()
+    private let hookMonitor = ClaudeHookMonitor()
     private let sleepAssertion = SleepAssertionManager()
     private let closedDisplayManager = ClosedDisplayManager()
     private let brightnessManager = DisplayBrightnessManager()
@@ -166,6 +166,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             userInfo: nil,
             repeats: true
         )
+        
+        do {
+            try HookInstaller.install()
+        } catch {
+            logger.error("Failed to install activity hooks: \(error.localizedDescription)")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -532,18 +538,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         isPollInFlight = true
-        let activityMonitor = self.activityMonitor
+        let hookMonitor = self.hookMonitor
         let idleThreshold = self.idleThreshold
-        pollTask = Task.detached(priority: .utility) { [activityMonitor, weak self] in
+        pollTask = Task.detached(priority: .utility) { [hookMonitor, weak self] in
             let pollDate = Date()
-            let snapshot = activityMonitor.poll(now: pollDate, idleThreshold: idleThreshold)
+            let snapshot = await hookMonitor.poll(now: pollDate, idleThreshold: idleThreshold)
             await MainActor.run { [weak self] in
                 self?.applyPoll(snapshot: snapshot, now: pollDate)
             }
         }
     }
 
-    private func applyPoll(snapshot: ClaudeTaskActivityMonitor.PollSnapshot, now: Date) {
+    private func applyPoll(snapshot: ClaudeHookMonitor.PollSnapshot, now: Date) {
         defer {
             isPollInFlight = false
             pollTask = nil
@@ -553,33 +559,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        let activeSessions = snapshot.activeSessions
-        let proc = snapshot.processStatus
-        let isActivelyWorking = snapshot.isClaudeActivelyWorking
-        var hasWarning = false
+        let isActivelyWorking = snapshot.isActivelyWorking
+        let hasWarning = false
         var statusText: String
-        var sessionsText: String
 
-        let processText: String
-        if proc.isActivelyWorking {
-            processText = "Process: active (PIDs: \(proc.pids.map(String.init).joined(separator: ",")), CPU: \(String(format: "%.1f", proc.cpuUsage))%, net: connected)"
-        } else if proc.isWaitingForInput {
-            processText = "Process: idle at prompt (PIDs: \(proc.pids.map(String.init).joined(separator: ",")), CPU: \(String(format: "%.1f", proc.cpuUsage))%)"
-        } else {
-            processText = "Process: not running"
-        }
+        let processText = isActivelyWorking ? "Claude Activity: Active" : "Claude Activity: Idle"
+        let sessionsText = snapshot.lastActivityDate != nil ? "Last Active: \(DateFormatter.localizedString(from: snapshot.lastActivityDate!, dateStyle: .none, timeStyle: .medium))" : "No recent activity"
 
         #if DEBUG
         do {
             let lidState = isLidClosed ? "closed" : "open"
-            let sessionCount = activeSessions.count
-            var log = "[poll] lid=\(lidState) sessions=\(sessionCount) procs=\(proc.pids.count) active=\(isActivelyWorking)"
-            if proc.isRunning {
-                log += " cpu=\(String(format: "%.1f", proc.cpuUsage))% net=\(proc.hasActiveConnections)"
-            }
-            for s in activeSessions {
-                let idle = String(format: "%.0f", s.idleFor)
-                log += "\n  session \(s.sessionID.prefix(8)): idle \(idle)s"
+            var log = "[poll] lid=\(lidState) active=\(isActivelyWorking)"
+            if let lastActive = snapshot.lastActivityDate {
+                log += " lastActive=\(lastActive)"
             }
             print(log)
         }
@@ -595,40 +587,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let thermalCritical = thermalMonitor.isCritical
         let shouldKeepAwake = !thermalCritical && (isActivelyWorking || shouldKeepAwakeWhileIdle(now: now))
 
-        switch snapshot.status {
-        case .ok:
-            lastSuccessfulPollAt = now
-            if shouldKeepAwake {
-                sleepAssertion.holdIfNeeded(reason: isActivelyWorking
-                    ? "Keeping Mac awake while Claude Code is actively working"
-                    : "Keeping Mac awake after idle (keep-awake timer)")
-            } else {
-                sleepAssertion.releaseAll()
-            }
-            statusText = thermalCritical ? "no lock (thermal critical)" : (sleepAssertion.isHeld ? "awake lock active" : "no lock")
-            sessionsText = "Active sessions: \(activeSessions.count) (oldest idle \(oldestIdleText(from: activeSessions)))"
-        case .tasksRootMissing:
-            hasWarning = true
-            if shouldKeepAwake {
-                sleepAssertion.holdIfNeeded(reason: "Keeping Mac awake while Claude Code is actively working")
-                statusText = "tasks folder missing; awake lock active (process detected)"
-            } else {
-                statusText = "tasks folder missing; \(lockStateDuringFailure(now: now))"
-            }
-            sessionsText = "Active sessions: unknown (missing ~/.claude/tasks)"
-        case .ioError:
-            hasWarning = true
-            if shouldKeepAwake {
-                sleepAssertion.holdIfNeeded(reason: "Keeping Mac awake while Claude Code is actively working")
-                statusText = "scan warning; awake lock active"
-                sessionsText = activeSessions.isEmpty
-                    ? "Active sessions: unknown (process detected)"
-                    : "Active sessions: \(activeSessions.count)/\(snapshot.totalSessions) (partial scan)"
-            } else {
-                statusText = "scan warning; \(lockStateDuringFailure(now: now))"
-                sessionsText = "Active sessions: unknown (filesystem read error)"
-            }
+        lastSuccessfulPollAt = now
+        if shouldKeepAwake {
+            sleepAssertion.holdIfNeeded(reason: isActivelyWorking
+                ? "Keeping Mac awake while Claude Code is actively working"
+                : "Keeping Mac awake after idle (keep-awake timer)")
+        } else {
+            sleepAssertion.releaseAll()
         }
+        statusText = thermalCritical ? "no lock (thermal critical)" : (sleepAssertion.isHeld ? "awake lock active" : "no lock")
 
         applyClosedLidState(hasActiveSessions: shouldKeepAwake)
 
@@ -646,15 +613,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             closedLidActive: closedLidEnabled,
             hasWarning: hasWarning
         )
-        let hasFileActivity = !activeSessions.isEmpty
-        let smoothedState = smoothedActivityTracker.update(
-            processStatus: proc,
-            hasFileActivity: hasFileActivity
-        )
-        let smoothedActive = smoothedState == .active
         taskCompletionNotifier.update(
-            isActivelyWorking: smoothedActive,
-            hasFileActivity: hasFileActivity,
+            isActivelyWorking: isActivelyWorking,
+            hasFileActivity: isActivelyWorking,
             currentCost: todayCost
         )
 
