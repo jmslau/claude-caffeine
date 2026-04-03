@@ -66,8 +66,6 @@ struct ClaudeCaffeine {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hookMonitor = ClaudeHookMonitor()
-    private let processDetector = ClaudeProcessDetector()
-    private let taskMonitor = ClaudeTaskActivityMonitor()
     private let sleepAssertion = SleepAssertionManager()
     private let closedDisplayManager = ClosedDisplayManager()
     private let brightnessManager = DisplayBrightnessManager()
@@ -77,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let taskCompletionNotifier = TaskCompletionNotifier()
     private let menuBarAnimator = MenuBarAnimator()
     private let costEstimator = SessionCostEstimator()
+    private let autoResumeManager = AutoResumeManager()
     #if DEBUG
     private let closedLidReporter = ClosedLidReporter(minimumDuration: 1)
     #else
@@ -587,38 +586,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         isPollInFlight = true
         let hookMonitor = self.hookMonitor
-        let processDetector = self.processDetector
-        let taskMonitor = self.taskMonitor
         let idleThreshold = self.idleThreshold
         
-        pollTask = Task.detached(priority: .utility) { [hookMonitor, processDetector, taskMonitor, weak self] in
+        pollTask = Task.detached(priority: .utility) { [hookMonitor, weak self] in
             let pollDate = Date()
             
-            // Poll all three signals
+            // Poll session-aware hooks
             let hookSnapshot = await hookMonitor.poll(now: pollDate, idleThreshold: idleThreshold)
-            let processSnapshot = processDetector.poll()
-            let taskSnapshot = taskMonitor.poll(idleThreshold: idleThreshold)
-            
-            // Combine results: Active if any signal is active
-            var activeSignals = hookSnapshot.activeSignals
-            if processSnapshot.isActivelyWorking { activeSignals.append("Process") }
-            if taskSnapshot.hasActiveSessions { activeSignals.append("Tasks") }
-            
-            let isActivelyWorking = !activeSignals.isEmpty
-                                   
-            let lastActivityDate = [
-                hookSnapshot.lastActivityDate,
-                taskSnapshot.lastActivityDate
-            ].compactMap { $0 }.max()
-            
-            let result = ClaudeHookMonitor.PollSnapshot(
-                isActivelyWorking: isActivelyWorking,
-                lastActivityDate: lastActivityDate,
-                activeSignals: activeSignals
-            )
             
             await MainActor.run { [weak self] in
-                self?.applyPoll(snapshot: result, now: pollDate)
+                self?.applyPoll(snapshot: hookSnapshot, now: pollDate)
             }
         }
     }
@@ -638,8 +615,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var statusText: String
 
         var processText = isActivelyWorking ? "Claude Activity: Active" : "Claude Activity: Idle"
-        if isActivelyWorking && !snapshot.activeSignals.isEmpty {
-            processText += " (\(snapshot.activeSignals.joined(separator: ", ")))"
+        if isActivelyWorking && snapshot.sessionCount > 0 {
+            processText += " (\(snapshot.sessionCount) Sessions)"
         }
         let sessionsText = snapshot.lastActivityDate != nil ? "Last Active: \(DateFormatter.localizedString(from: snapshot.lastActivityDate!, dateStyle: .none, timeStyle: .medium))" : "No recent activity"
 

@@ -15,7 +15,7 @@ public class AutoResumeManager {
     private var claudeConfigDir: URL { homeDirectory.appendingPathComponent(".claude") }
     private var wrapperScriptURL: URL { claudeConfigDir.appendingPathComponent("auto-resume-wrapper.py") }
 
-    private init() {}
+    public init() {}
 
     /// For testing purposes
     internal func setHomeDirectory(_ url: URL) {
@@ -77,6 +77,7 @@ public class AutoResumeManager {
         import termios
         import struct
         import fcntl
+        from pathlib import Path
 
         def get_seconds_until(hour, minute, ampm):
             now = datetime.now()
@@ -104,7 +105,7 @@ public class AutoResumeManager {
                             if "python3" not in first_line:
                                 return exec_path
                     except Exception:
-                        return exec_path
+                        pass
             return "claude"
 
         def main():
@@ -112,7 +113,10 @@ public class AutoResumeManager {
                 original_exe = get_original_executable()
                 os.execvp(original_exe, ["claude"] + sys.argv[1:])
 
-            limit_regex = re.compile(r"resets (\\d{1,2})(?::(\\d{2}))?(am|pm)", re.IGNORECASE)
+            limit_regex = re.compile(r"resets (\\\\d{1,2})(?::(\\\\d{2}))?(am|pm)", re.IGNORECASE)
+            
+            sessions_dir = Path.home() / ".claude" / "caffeine_sessions"
+            session_file = sessions_dir / f"auto-resume-{os.getpid()}"
             
             original_exe = get_original_executable()
             cmd = ["claude"] + sys.argv[1:]
@@ -168,17 +172,30 @@ public class AutoResumeManager {
                                     ampm = match.group(3).lower()
                                     sleep_time = get_seconds_until(h, m, ampm) + 60
                                     if 0 < sleep_time < 86400:
-                                        msg = f"\\r\\n\\033[93m[Claude Caffeine] Over limit! Auto-resuming in {int(sleep_time/60)} minutes...\\033[0m\\r\\n"
+                                        msg = f"\\\\r\\\\n\\\\033[93m[Claude Caffeine] Over limit! Auto-resuming in {int(sleep_time/60)} minutes...\\\\033[0m\\\\r\\\\n"
                                         sys.stdout.write(msg)
                                         sys.stdout.flush()
+                                        
+                                        # Keep Mac awake during wait
+                                        try:
+                                            sessions_dir.mkdir(parents=True, exist_ok=True)
+                                            session_file.touch()
+                                        except: pass
+                                        
                                         time.sleep(sleep_time)
-                                        os.write(master_fd, b'\\r')
+                                        
+                                        try: session_file.unlink()
+                                        except: pass
+                                        
+                                        os.write(master_fd, b'\\\\r')
                                         buf = ""
                         except OSError:
                             break
             finally:
                 if mode is not None:
                     tty.tcsetattr(sys.stdin.fileno(), tty.TCSAFLUSH, mode)
+                try: session_file.unlink()
+                except: pass
                 os.waitpid(pid, 0)
 
         if __name__ == "__main__": main()
@@ -206,9 +223,9 @@ public class AutoResumeManager {
 
     private func injectAlias() throws {
         let block = """
-        \(markerBegin)
-        alias claude="python3 \(wrapperScriptURL.path)"
-        \(markerEnd)
+        \\(markerBegin)
+        alias claude="python3 \\(wrapperScriptURL.path)"
+        \\(markerEnd)
         """
 
         let profiles = getProfiles()
@@ -221,7 +238,7 @@ public class AutoResumeManager {
                 if content.contains(markerBegin) {
                     let escapedBegin = NSRegularExpression.escapedPattern(for: markerBegin)
                     let escapedEnd = NSRegularExpression.escapedPattern(for: markerEnd)
-                    let regex = try NSRegularExpression(pattern: "\\n?\(escapedBegin).*?\(escapedEnd)\\n?", options: .dotMatchesLineSeparators)
+                    let regex = try NSRegularExpression(pattern: "\\\\n?\\(escapedBegin).*?\\(escapedEnd)\\\\n?", options: .dotMatchesLineSeparators)
                     content = regex.stringByReplacingMatches(in: content, options: [], range: NSRange(location: 0, length: content.count), withTemplate: "\n" + block + "\n")
                 } else {
                     content += "\n" + block + "\n"
@@ -234,16 +251,14 @@ public class AutoResumeManager {
         
         if !injected {
             let zshrc = getProfiles()[0]
-            try (block + "\n").write(to: zshrc, atomically: true, encoding: .utf8)
+            try? (block + "\n").write(to: zshrc, atomically: true, encoding: .utf8)
         }
     }
 
     private func removeAlias() throws {
         let profiles = getProfiles()
         
-        let escapedBegin = NSRegularExpression.escapedPattern(for: markerBegin)
-        let escapedEnd = NSRegularExpression.escapedPattern(for: markerEnd)
-        let regexPattern = "\\n?\(escapedBegin).*?\(escapedEnd)\\n?"
+        let regexPattern = "\\n?\(NSRegularExpression.escapedPattern(for: markerBegin)).*?\(NSRegularExpression.escapedPattern(for: markerEnd))\\n?"
         let regex = try NSRegularExpression(pattern: regexPattern, options: .dotMatchesLineSeparators)
 
         for profile in profiles {
