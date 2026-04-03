@@ -73,7 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let batteryMonitor = BatteryMonitor()
     private let thermalMonitor = ThermalMonitor()
     private let taskCompletionNotifier = TaskCompletionNotifier()
-    private let smoothedActivityTracker = SmoothedActivityTracker()
     private let menuBarAnimator = MenuBarAnimator()
     private let costEstimator = SessionCostEstimator()
     #if DEBUG
@@ -934,13 +933,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let remaining = monitorFailureGracePeriod - elapsed
         return "keeping lock for \(durationText(for: remaining)) grace"
-    }
-
-    private func oldestIdleText(from activeSessions: [ClaudeTaskActivityMonitor.SessionActivity]) -> String {
-        guard let oldest = activeSessions.max(by: { $0.idleFor < $1.idleFor }) else {
-            return "n/a"
-        }
-        return durationText(for: oldest.idleFor)
     }
 
     private func durationText(for duration: TimeInterval) -> String {
