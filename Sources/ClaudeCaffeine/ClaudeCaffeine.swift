@@ -113,6 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         action: #selector(uninstallHelper),
         keyEquivalent: ""
     )
+    private var autoResumeToggleItem = NSMenuItem(
+        title: "Enable Auto-Resume...",
+        action: #selector(toggleAutoResume),
+        keyEquivalent: ""
+    )
     private var notificationToggleItem = NSMenuItem(
         title: "Completion Notifications",
         action: #selector(toggleNotifications),
@@ -281,6 +286,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refresh()
     }
 
+    private func updateAutoResumeMenu() {
+        let isEnabled = AutoResumeManager.shared.isEnabled
+        autoResumeToggleItem.state = isEnabled ? .on : .off
+        autoResumeToggleItem.title = isEnabled ? "Enable Auto-Resume (Experimental)" : "Enable Auto-Resume (Experimental)..."
+    }
+
+    @objc
+    private func toggleAutoResume() {
+        let isEnabled = AutoResumeManager.shared.isEnabled
+        if !isEnabled {
+            let alert = NSAlert()
+            alert.messageText = "Enable Auto-Resume (Experimental)?"
+            alert.informativeText = "This feature will automatically resume Claude Code overnight when usage limits reset. To achieve this without altering how you start Claude, it will add a 'claude' Python wrapper alias to your shell profile (~/.zshrc).\\n\\nNote: You will need to open a new terminal window for it to take effect."
+            alert.addButton(withTitle: "Enable")
+            alert.addButton(withTitle: "Cancel")
+            alert.alertStyle = .warning
+
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                do {
+                    try AutoResumeManager.shared.enable()
+                } catch {
+                    showAlert(title: "Failed to Enable Auto-Resume", message: error.localizedDescription)
+                }
+            }
+        } else {
+            do {
+                try AutoResumeManager.shared.disable()
+                showAlert(title: "Auto-Resume Disabled", message: "The wrapper alias has been removed from your shell profiles. Please restart any active terminal sessions.")
+            } catch {
+                showAlert(title: "Failed to Disable Auto-Resume", message: error.localizedDescription)
+            }
+        }
+        updateAutoResumeMenu()
+    }
+
     // MARK: - Menu
 
     private func setupMenuBar() {
@@ -350,6 +391,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.setSubmenu(keepAwakeMenu, for: keepAwakeParent)
         menu.addItem(keepAwakeParent)
         updateKeepAwakeMenu()
+
+        menu.addItem(.separator())
+
+        autoResumeToggleItem.target = self
+        updateAutoResumeMenu()
+        menu.addItem(autoResumeToggleItem)
 
         menu.addItem(.separator())
 
