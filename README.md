@@ -165,7 +165,7 @@ Release build and cask update:
 
 - **Hook-based activity detection** — Migrated from legacy process/file polling to native Claude Code hooks (`settings.json`). Faster, more reliable, and lower overhead.
 - **Heartbeat monitoring** — Robust detection of manual terminal interrupts (Escape key) and crashes via a 5-minute heartbeat timeout and PID liveness checks.
-- **Auto-Resume fixes** — Resolved several reliability issues with the experimental Python wrapper.
+- **Auto-Resume after limit reached** — You kick off Claude before going to bed, and it uses up token limit in the first 10 mins. Claude Caffeine will now auto-resume Claude after the token limit is reset.
 
 ### v1.3.2
 
