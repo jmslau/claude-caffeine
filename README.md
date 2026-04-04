@@ -60,12 +60,12 @@ open /Applications/Claude\ Caffeine.app
 
 ## How it works
 
-Every 5 seconds the app checks two signals:
+The app monitors Claude Code activity using **native hooks**. 
 
-1. **Process** — Running `claude` processes, CPU usage, and network connections. Active connections or >5% CPU = Claude is working.
-2. **Files** — Recent changes under `~/.claude/tasks/`. Catches tool runs when the API is briefly idle.
+1. **Hooks** — Claude Code is configured to trigger scripts on session events (UserPromptSubmit, PreToolUse, Stop, etc.). These scripts manage session files under `~/.claude/caffeine_sessions/`.
+2. **Heartbeat** — To handle manual interrupts (like pressing Escape) or crashes, the app uses a 5-minute heartbeat timeout and PID liveness checks.
 
-If *either* signal is active, the Mac stays awake. When *both* go quiet, the sleep lock is released.
+If any valid session is active, the Mac stays awake. When sessions time out or end, the sleep lock is released.
 
 ---
 
@@ -161,6 +161,12 @@ Release build and cask update:
 
 ## Changelog
 
+### v1.3.3
+
+- **Hook-based activity detection** — Migrated from legacy process/file polling to native Claude Code hooks (`settings.json`). Faster, more reliable, and lower overhead.
+- **Heartbeat monitoring** — Robust detection of manual terminal interrupts (Escape key) and crashes via a 5-minute heartbeat timeout and PID liveness checks.
+- **Auto-Resume fixes** — Resolved several reliability issues with the experimental Python wrapper.
+
 ### v1.3.2
 
 - **Smarter completion notifications** — Reduced false-positive "task completed" sounds caused by CPU fluctuations when Claude is idle. A new multi-layer detection system uses CPU smoothing (3-sample sliding window), hysteresis with separate enter/exit thresholds, file-activity corroboration, and a 60-second cooldown between notifications.
@@ -194,12 +200,6 @@ Release build and cask update:
 ### v1.1.1
 
 - **Show Cost Meter toggle** — Hide/show cost in menu bar; API pricing disclaimer.
-
-### v1.2.0
-
-- **Hook-based activity detection** — Migrated from process polling to native Claude Code hooks (`settings.json`). Faster, more reliable, and lower overhead.
-- **Heartbeat monitoring** — Robust detection of manual terminal interrupts (Escape key) and crashes via a 5-minute heartbeat timeout and PID liveness checks.
-- **Auto-Resume fixes** — Resolved several reliability issues with the experimental Python wrapper.
 
 ### v1.1.0
 
