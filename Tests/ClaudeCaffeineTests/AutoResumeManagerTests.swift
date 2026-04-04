@@ -50,4 +50,28 @@ final class AutoResumeManagerTests: XCTestCase {
         XCTAssertFalse(content.contains("# BEGIN CLAUDE CAFFEINE AUTO-RESUME"))
         XCTAssertTrue(content.contains("existing content"))
     }
+
+    /// Regression: literal Swift template text must never remain in ~/.zshrc (breaks `source ~/.zshrc`).
+    func testEnableStripsCorruptedSwiftTemplateLines() throws {
+        let zshrc = tempDir.appendingPathComponent(".zshrc")
+        let badLine1 = "\\n\\(" + "markerBegin" + ")"
+        let badLine2 = "alias claude=\"python3 \\(" + "wrapperScriptURL.path" + ")\""
+        let badLine3 = "\\(" + "markerEnd" + ")"
+        try """
+        existing content
+        \(badLine1)
+        \(badLine2)
+        \(badLine3)
+        """.write(to: zshrc, atomically: true, encoding: .utf8)
+
+        try manager.enable()
+
+        let content = try String(contentsOf: zshrc, encoding: .utf8)
+        XCTAssertTrue(content.contains("existing content"))
+        XCTAssertFalse(content.contains("\\(" + "markerBegin" + ")"))
+        XCTAssertFalse(content.contains("\\(" + "wrapperScriptURL.path" + ")"))
+        XCTAssertTrue(content.contains("# BEGIN CLAUDE CAFFEINE AUTO-RESUME"))
+        let aliasLines = content.components(separatedBy: .newlines).filter { $0.hasPrefix("alias claude=") }
+        XCTAssertEqual(aliasLines.count, 1, "Expected a single alias line after cleanup")
+    }
 }

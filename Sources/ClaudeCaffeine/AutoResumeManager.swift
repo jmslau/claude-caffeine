@@ -212,6 +212,27 @@ public class AutoResumeManager {
 
     private let markerBegin = "# BEGIN CLAUDE CAFFEINE AUTO-RESUME"
     private let markerEnd = "# END CLAUDE CAFFEINE AUTO-RESUME"
+
+    /// Lines matching this pattern appear when Swift string interpolation never ran (e.g. raw multiline `#"""…"""#` where `\(` is literal). They break `source ~/.zshrc`.
+    private static let corruptedSwiftTemplateNeedles: [String] = [
+        "\\(" + "markerBegin" + ")",
+        "\\(" + "markerEnd" + ")",
+        "\\(" + "wrapperScriptURL.path" + ")"
+    ]
+
+    /// Builds the profile snippet without multiline `\(…)` literals so a packaging mistake cannot ship Swift source into user shell files.
+    private func makeProfileBlock(wrapperPath: String) -> String {
+        markerBegin + "\n" + "alias claude=\"python3 " + wrapperPath + "\"\n" + markerEnd
+    }
+
+    private func stripCorruptedSwiftTemplateLines(_ content: String) -> String {
+        content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { line in
+                !Self.corruptedSwiftTemplateNeedles.contains { String(line).contains($0) }
+            }
+            .joined(separator: "\n")
+    }
     
     private func getProfiles() -> [URL] {
         return [
@@ -222,11 +243,7 @@ public class AutoResumeManager {
     }
 
     private func injectAlias() throws {
-        let block = """
-        \(markerBegin)
-        alias claude="python3 \(wrapperScriptURL.path)"
-        \(markerEnd)
-        """
+        let block = makeProfileBlock(wrapperPath: wrapperScriptURL.path)
 
         let profiles = getProfiles()
         var injected = false
@@ -234,6 +251,7 @@ public class AutoResumeManager {
         for profile in profiles {
             if FileManager.default.fileExists(atPath: profile.path) {
                 var content = try String(contentsOf: profile, encoding: .utf8)
+                content = stripCorruptedSwiftTemplateLines(content)
                 
                 if content.contains(markerBegin) {
                     let escapedBegin = NSRegularExpression.escapedPattern(for: markerBegin)
@@ -263,7 +281,8 @@ public class AutoResumeManager {
 
         for profile in profiles {
             if FileManager.default.fileExists(atPath: profile.path) {
-                let content = try String(contentsOf: profile, encoding: .utf8)
+                var content = try String(contentsOf: profile, encoding: .utf8)
+                content = stripCorruptedSwiftTemplateLines(content)
                 if content.contains(markerBegin) {
                     let newContent = regex.stringByReplacingMatches(in: content, options: [], range: NSRange(location: 0, length: content.count), withTemplate: "\n")
                     try newContent.write(to: profile, atomically: true, encoding: .utf8)
