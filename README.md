@@ -195,6 +195,12 @@ Release build and cask update:
 
 - **Show Cost Meter toggle** — Hide/show cost in menu bar; API pricing disclaimer.
 
+### v1.2.0
+
+- **Hook-based activity detection** — Migrated from process polling to native Claude Code hooks (`settings.json`). Faster, more reliable, and lower overhead.
+- **Heartbeat monitoring** — Robust detection of manual terminal interrupts (Escape key) and crashes via a 5-minute heartbeat timeout and PID liveness checks.
+- **Auto-Resume fixes** — Resolved several reliability issues with the experimental Python wrapper.
+
 ### v1.1.0
 
 - **Session cost tracking** — From `~/.claude/projects/` JSONL; per-model pricing including cache tokens.
