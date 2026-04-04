@@ -166,6 +166,7 @@ Release build and cask update:
 - **Hook-based activity detection** — Migrated from legacy process/file polling to native Claude Code hooks (`settings.json`). Faster, more reliable, and lower overhead.
 - **Heartbeat monitoring** — Robust detection of manual terminal interrupts (Escape key) and crashes via a 5-minute heartbeat timeout and PID liveness checks.
 - **Auto-Resume after limit reached** — You kick off Claude before going to bed, and it uses up token limit in the first 10 mins. Claude Caffeine will now auto-resume Claude after the token limit is reset.
+- **Auto-Resume shell profile safety** — Profile injection no longer uses multiline Swift interpolation for the `~/.zshrc` snippet, and enabling Auto-Resume strips accidental “Swift template” garbage lines so `source ~/.zshrc` cannot break from a bad install.
 
 ### v1.3.2
 
