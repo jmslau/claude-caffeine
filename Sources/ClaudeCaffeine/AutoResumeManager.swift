@@ -223,9 +223,9 @@ public class AutoResumeManager {
 
     private func injectAlias() throws {
         let block = """
-        \\(markerBegin)
-        alias claude="python3 \\(wrapperScriptURL.path)"
-        \\(markerEnd)
+        \(markerBegin)
+        alias claude="python3 \(wrapperScriptURL.path)"
+        \(markerEnd)
         """
 
         let profiles = getProfiles()
@@ -238,7 +238,7 @@ public class AutoResumeManager {
                 if content.contains(markerBegin) {
                     let escapedBegin = NSRegularExpression.escapedPattern(for: markerBegin)
                     let escapedEnd = NSRegularExpression.escapedPattern(for: markerEnd)
-                    let regex = try NSRegularExpression(pattern: "\\\\n?\\(escapedBegin).*?\\(escapedEnd)\\\\n?", options: .dotMatchesLineSeparators)
+                    let regex = try NSRegularExpression(pattern: "\n?\(escapedBegin).*?\(escapedEnd)\n?", options: .dotMatchesLineSeparators)
                     content = regex.stringByReplacingMatches(in: content, options: [], range: NSRange(location: 0, length: content.count), withTemplate: "\n" + block + "\n")
                 } else {
                     content += "\n" + block + "\n"

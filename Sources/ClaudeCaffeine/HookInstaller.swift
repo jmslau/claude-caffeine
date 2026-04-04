@@ -24,7 +24,12 @@ try {
     const input = JSON.parse(fs.readFileSync(0, 'utf8'));
     const sessionId = input.session_id;
     if (sessionId) {
-        fs.writeFileSync(path.join(sessionsDir, sessionId), Date.now().toString());
+        // Record timestamp and Claude's PID (ppid)
+        const data = {
+            timestamp: Date.now(),
+            pid: process.ppid
+        };
+        fs.writeFileSync(path.join(sessionsDir, sessionId), JSON.stringify(data));
     }
 } catch (e) {}
 """
@@ -53,14 +58,21 @@ try {
     static var isInstalled: Bool {
         guard let data = try? Data(contentsOf: settingsURL),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let hooks = dict["hooks"] as? [String: [[String: Any]]] else { return false }
+              let rootHooks = dict["hooks"] as? [String: [[String: Any]]] else { return false }
         
-        // Basic check: do we have our active/idle commands in the right events?
         let expectedEvents = ["UserPromptSubmit", "PreToolUse", "Stop", "Elicitation"]
         for event in expectedEvents {
-            if hooks[event]?.contains(where: { ($0["command"] as? String)?.contains("caffeine-hooks") == true }) != true {
+            guard let eventHooks = rootHooks[event] else { return false }
+            // Check if any of the hook entries contains our caffeine script
+            let found = eventHooks.contains { entry in
+                if let subHooks = entry["hooks"] as? [[String: Any]] {
+                    return subHooks.contains { sub in
+                        (sub["command"] as? String)?.contains("caffeine-hooks") == true
+                    }
+                }
                 return false
             }
+            if !found { return false }
         }
         
         return true
@@ -83,17 +95,35 @@ try {
             dict = parsed
         }
         
-        var hooks = dict["hooks"] as? [String: [[String: Any]]] ?? [String: [[String: Any]]]()
+        var rootHooks = dict["hooks"] as? [String: [[String: Any]]] ?? [String: [[String: Any]]]()
         
         let addHook = { (event: String, command: String, description: String) in
-            var events = hooks[event] ?? []
+            var events = rootHooks[event] ?? []
             // Remove any legacy caffeine hooks first
             events.removeAll(where: { 
-                let cmd = ($0["command"] as? String) ?? ""
-                return cmd.contains(".caffeine_active") || cmd.contains("caffeine-hooks") 
+                if ( ($0["command"] as? String) ?? "" ).contains("caffeine-hooks") { return true }
+                if let subHooks = $0["hooks"] as? [[String: Any]] {
+                    return subHooks.contains { sub in
+                        (sub["command"] as? String)?.contains("caffeine-hooks") == true
+                    }
+                }
+                return false
             })
-            events.append(["command": command, "description": description])
-            hooks[event] = events
+            
+            // New structure: 
+            // { "matcher": "*", "hooks": [ { "type": "command", "command": "...", "description": "..." } ] }
+            let hookEntry: [String: Any] = [
+                "matcher": "*",
+                "hooks": [
+                    [
+                        "type": "command",
+                        "command": command,
+                        "description": description
+                    ]
+                ]
+            ]
+            events.append(hookEntry)
+            rootHooks[event] = events
         }
         
         // Active hooks
@@ -108,13 +138,9 @@ try {
         addHook("SubagentStop", idleCommand, "ClaudeCaffeine (Idle)")
         
         // Special: Notification with idle/permission prompts
-        // For simple command hooks, we can't easily differentiate matcher in this Swift helper 
-        // without more complex logic, but we'll add it generally for now.
-        // Better: add a Notification hook that calls idleCommand always? No, too aggressive.
-        // Actually, if we hit a permission prompt, Claude Code fires Notification.
         addHook("Notification", idleCommand, "ClaudeCaffeine (Idle for Prompts)")
         
-        dict["hooks"] = hooks
+        dict["hooks"] = rootHooks
         
         let outData = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
         try outData.write(to: settingsURL)
@@ -124,23 +150,28 @@ try {
     static func uninstall() throws {
         guard let data = try? Data(contentsOf: settingsURL),
               var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var hooks = dict["hooks"] as? [String: [[String: Any]]] else { return }
+              var rootHooks = dict["hooks"] as? [String: [[String: Any]]] else { return }
         
-        for event in hooks.keys {
-            if var events = hooks[event] {
+        for event in rootHooks.keys {
+            if var events = rootHooks[event] {
                 events.removeAll(where: { 
-                    let cmd = ($0["command"] as? String) ?? ""
-                    return cmd.contains("caffeine-hooks") || cmd.contains(".caffeine_active")
+                    if ( ($0["command"] as? String) ?? "" ).contains("caffeine-hooks") { return true }
+                    if let subHooks = $0["hooks"] as? [[String: Any]] {
+                        return subHooks.contains { sub in
+                            (sub["command"] as? String)?.contains("caffeine-hooks") == true
+                        }
+                    }
+                    return false
                 })
                 if events.isEmpty {
-                    hooks.removeValue(forKey: event)
+                    rootHooks.removeValue(forKey: event)
                 } else {
-                    hooks[event] = events
+                    rootHooks[event] = events
                 }
             }
         }
         
-        dict["hooks"] = hooks
+        dict["hooks"] = rootHooks
         let outData = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
         try outData.write(to: settingsURL)
         

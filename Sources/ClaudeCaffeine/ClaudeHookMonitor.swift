@@ -20,39 +20,58 @@ actor ClaudeHookMonitor {
     private var lastObservedActiveDate: Date?
 
     func poll(now: Date, idleThreshold: TimeInterval) -> PollSnapshot {
-        var isActivelyWorking = false
-        var activeSignals: [String] = []
-        var sessionCount = 0
+        var activeSessionCount = 0
+        var foundAnyActive = false
         
         let fileManager = FileManager.default
-        if let contents = try? fileManager.contentsOfDirectory(at: sessionsDir, includingPropertiesForKeys: [.contentModificationDateKey], options: []) {
+        let hookStaleThreshold: TimeInterval = 300 // 5 minutes
+        
+        if let contents = try? fileManager.contentsOfDirectory(at: sessionsDir, includingPropertiesForKeys: nil, options: []) {
             for fileURL in contents {
-                guard let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path),
-                      let modDate = attributes[.modificationDate] as? Date else { continue }
+                guard let data = try? Data(contentsOf: fileURL),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let timestampMs = json["timestamp"] as? Double,
+                      let pid = json["pid"] as? Int32 else {
+                    // Legacy or Corrupt file - cleanup if old
+                    if let attr = try? fileManager.attributesOfItem(atPath: fileURL.path),
+                       let modDate = attr[.modificationDate] as? Date,
+                       now.timeIntervalSince(modDate) > hookStaleThreshold {
+                        try? fileManager.removeItem(at: fileURL)
+                    }
+                    continue
+                }
                 
-                // Safety cleanup of orphan files
-                if now.timeIntervalSince(modDate) > maxSessionAge {
+                let lastHookDate = Date(timeIntervalSince1970: timestampMs / 1000.0)
+                let elapsed = now.timeIntervalSince(lastHookDate)
+                
+                // 1. Check PID liveness (kill with signal 0 checks existence)
+                let isProcessAlive = kill(pid, 0) == 0
+                
+                // 2. Check if stale (Escape key handling)
+                let isStale = elapsed > hookStaleThreshold
+                
+                if !isProcessAlive || isStale {
+                    // Cleanup zombie session
                     try? fileManager.removeItem(at: fileURL)
                     continue
                 }
                 
-                // If it was touched recently, or exists at all, it represents an active session
-                // We trust the hooks to touch/rm correctly, but any file existence here means "Active".
-                sessionCount += 1
-                isActivelyWorking = true
-                lastObservedActiveDate = now
+                activeSessionCount += 1
+                foundAnyActive = true
             }
         }
         
-        if isActivelyWorking {
-            activeSignals.append("\(sessionCount) Sessions")
+        if foundAnyActive {
+            lastObservedActiveDate = now
         }
+        
+        let activeSignals = foundAnyActive ? ["\(activeSessionCount) Sessions"] : []
 
         return PollSnapshot(
-            isActivelyWorking: isActivelyWorking,
+            isActivelyWorking: foundAnyActive,
             lastActivityDate: lastObservedActiveDate,
             activeSignals: activeSignals,
-            sessionCount: sessionCount
+            sessionCount: activeSessionCount
         )
     }
 }
