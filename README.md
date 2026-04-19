@@ -97,7 +97,7 @@ The app reads Claude Code session logs (`~/.claude/projects/`) to estimate API c
 - **Cost this week** (rolling 7 days)  
 - **Cost by project** in a submenu  
 
-Pricing uses Anthropic’s pay-per-token rates for Opus, Sonnet, and Haiku (including cache read/write). Each message is costed by its own model, so mixed-model sessions are accurate. Costs refresh every 30 seconds.
+Pricing follows Anthropic’s **standard** API table (per-model input/output and 5m prompt-cache write / cache-hit rates). Each billable assistant row in the JSONL is costed by its own model; rows with `model: "<synthetic>"` are excluded (same as common community parsers). Estimates do **not** include fast mode, Batch API, geo routing premiums, or a split between 5m vs 1h cache writes (logs only expose aggregate cache token counts). Costs refresh every 30 seconds.
 
 > **Note:** These are estimates for **API (pay-per-token) usage**. If you’re on Claude Pro or Max, the numbers won’t match your actual bill.
 
