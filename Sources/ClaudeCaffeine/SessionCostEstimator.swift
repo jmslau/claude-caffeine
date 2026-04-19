@@ -51,25 +51,42 @@ struct CostSnapshot: Sendable {
 
 @MainActor
 final class SessionCostEstimator {
-    private static let pricing: [String: ModelPricing] = [
-        "claude-opus-4-6": ModelPricing(
-            inputPerMillion: 15.0, outputPerMillion: 75.0,
-            cacheCreationPerMillion: 18.75, cacheReadPerMillion: 1.50
-        ),
-        "claude-sonnet-4-6": ModelPricing(
-            inputPerMillion: 3.0, outputPerMillion: 15.0,
-            cacheCreationPerMillion: 3.75, cacheReadPerMillion: 0.30
-        ),
-        "claude-haiku-4-5": ModelPricing(
-            inputPerMillion: 0.80, outputPerMillion: 4.0,
-            cacheCreationPerMillion: 1.0, cacheReadPerMillion: 0.08
-        ),
-    ]
-
-    private static let fallbackPricing = ModelPricing(
+    /// Opus 4.5 / 4.6 / 4.7 — Anthropic standard API (5m cache write / cache hit columns).
+    private static let opusCheapPricing = ModelPricing(
+        inputPerMillion: 5.0, outputPerMillion: 25.0,
+        cacheCreationPerMillion: 6.25, cacheReadPerMillion: 0.50
+    )
+    /// Opus 4, 4.1, Opus 3 (legacy table).
+    private static let opusLegacyPricing = ModelPricing(
+        inputPerMillion: 15.0, outputPerMillion: 75.0,
+        cacheCreationPerMillion: 18.75, cacheReadPerMillion: 1.50
+    )
+    private static let sonnetPricing = ModelPricing(
         inputPerMillion: 3.0, outputPerMillion: 15.0,
         cacheCreationPerMillion: 3.75, cacheReadPerMillion: 0.30
     )
+    private static let haiku45Pricing = ModelPricing(
+        inputPerMillion: 1.0, outputPerMillion: 5.0,
+        cacheCreationPerMillion: 1.25, cacheReadPerMillion: 0.10
+    )
+    private static let haiku35Pricing = ModelPricing(
+        inputPerMillion: 0.80, outputPerMillion: 4.0,
+        cacheCreationPerMillion: 1.0, cacheReadPerMillion: 0.08
+    )
+
+    private static let pricing: [String: ModelPricing] = [
+        "claude-opus-4-7": opusCheapPricing,
+        "claude-opus-4-6": opusCheapPricing,
+        "claude-opus-4-5": opusCheapPricing,
+        "claude-opus-4-1": opusLegacyPricing,
+        "claude-opus-4-20250514": opusLegacyPricing,
+        "claude-sonnet-4-6": sonnetPricing,
+        "claude-sonnet-4-5": sonnetPricing,
+        "claude-haiku-4-5": haiku45Pricing,
+        "claude-haiku-3-5": haiku35Pricing,
+    ]
+
+    private static let fallbackPricing = sonnetPricing
 
     let projectsRootURL: URL
 
@@ -204,6 +221,17 @@ final class SessionCostEstimator {
         return results
     }
 
+    /// Coerces JSON-decoded values (NSNumber, Double, String) to Int; returns nil if absent or non-numeric.
+    private static func intFromJSON(_ value: Any?) -> Int? {
+        guard let value else { return nil }
+        if value is NSNull { return nil }
+        if let i = value as? Int { return i }
+        if let n = value as? NSNumber { return Int(n.doubleValue.rounded()) }
+        if let d = value as? Double { return Int(d.rounded()) }
+        if let s = value as? String, let i = Int(s) { return i }
+        return nil
+    }
+
     private static func parseSession(fileURL: URL, projectPath: String) -> SessionCost? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
         guard let content = String(data: data, encoding: .utf8) else { return nil }
@@ -230,17 +258,22 @@ final class SessionCostEstimator {
                 continue
             }
 
+            let msgModel = (message["model"] as? String) ?? ""
+            if msgModel == "<synthetic>" { continue }
+
+            // Match ccusage: only count rows with explicit input_tokens (allows 0).
+            guard usage["input_tokens"] != nil, !(usage["input_tokens"] is NSNull) else { continue }
+            guard let input = intFromJSON(usage["input_tokens"]) else { continue }
+
             messageCount += 1
 
-            let msgModel = (message["model"] as? String) ?? ""
             if !msgModel.isEmpty {
                 modelCounts[msgModel, default: 0] += 1
             }
 
-            let input = usage["input_tokens"] as? Int ?? 0
-            let output = usage["output_tokens"] as? Int ?? 0
-            let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
-            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
+            let output = intFromJSON(usage["output_tokens"]) ?? 0
+            let cacheCreation = intFromJSON(usage["cache_creation_input_tokens"]) ?? 0
+            let cacheRead = intFromJSON(usage["cache_read_input_tokens"]) ?? 0
 
             totalInput += input
             totalOutput += output
@@ -287,8 +320,34 @@ final class SessionCostEstimator {
         for (key, value) in pricing where model.hasPrefix(key) {
             return value
         }
-        if model.contains("opus") { return pricing["claude-opus-4-6"]! }
-        if model.contains("haiku") { return pricing["claude-haiku-4-5"]! }
+
+        let m = model.lowercased()
+
+        if m.contains("opus") {
+            if m.contains("4-7") || m.contains("4.7")
+                || m.contains("4-6") || m.contains("4.6")
+                || m.contains("4-5") || m.contains("4.5") {
+                return opusCheapPricing
+            }
+            if m.contains("4-1") || m.contains("4.1") {
+                return opusLegacyPricing
+            }
+            // e.g. claude-opus-4-20250514 (Opus 4) — not 4.5+
+            if m.contains("opus-4"), !m.contains("4-5"), !m.contains("4.5"),
+               !m.contains("4-6"), !m.contains("4.6"),
+               !m.contains("4-7"), !m.contains("4.7") {
+                return opusLegacyPricing
+            }
+            return opusLegacyPricing
+        }
+
+        if m.contains("haiku") {
+            if m.contains("4-5") || m.contains("4.5") { return haiku45Pricing }
+            return haiku35Pricing
+        }
+
+        if m.contains("sonnet") { return sonnetPricing }
+
         return fallbackPricing
     }
 
