@@ -161,6 +161,13 @@ Release build and cask update:
 
 ## Changelog
 
+### v1.3.5
+
+- **Updated pricing for Opus 4.7** — Opus 4.5, 4.6, and 4.7 use Anthropic’s current standard API rates (\$5 / \$25 per MTok in/out, with 5m cache write and cache-hit pricing). Legacy Opus 4 / 4.1 and snapshot-style ids keep the older tier.
+- **Session cost parsing** — Skips `<synthetic>` assistant rows; only counts assistant usage rows with an explicit `input_tokens` field (aligned with common JSONL parsers). Token counts coerce safely from JSON numbers or strings.
+- **Haiku 4.5 pricing** — Corrected to the published Haiku 4.5 tier vs Haiku 3.5.
+- **Regression tests** — Expanded coverage for tiers, cache math, malformed JSON lines, and week vs today rollups.
+
 ### v1.3.4
 
 - **Auto-Resume shell profile safety** — Profile injection no longer uses multiline Swift interpolation for the `~/.zshrc` snippet, and enabling Auto-Resume strips accidental “Swift template” garbage lines so `source ~/.zshrc` cannot break from a bad install. Toggle Auto-Resume off and on once to repair an affected profile.

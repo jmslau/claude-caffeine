@@ -117,6 +117,8 @@ gh release create "v${VERSION}" "$ZIP_PATH" \
   --title "v${VERSION}" \
   --notes "Claude Caffeine v${VERSION}
 
+**Release notes:** [README changelog](https://github.com/${SOURCE_REPO}/blob/main/README.md#changelog)
+
 Install:
 \`\`\`
 brew install --cask jmslau/tap/claude-caffeine
