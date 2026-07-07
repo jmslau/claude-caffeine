@@ -520,6 +520,77 @@ final class SessionCostEstimatorTests: XCTestCase {
         XCTAssertEqual(snapshot.activeSessions.first?.totalCost ?? 0, expected, accuracy: 1e-9)
     }
 
+    func testOpus48UsesCurrentTierNotLegacy() throws {
+        // Regression: claude-opus-4-8 is the dominant model in real logs. It must
+        // bill at the current $5/$25 tier, not the legacy $15/$75 fallback.
+        let now = Date()
+        let ts = ISO8601DateFormatter().string(from: now)
+        let projectDir = fixtureRootURL.appendingPathComponent("opus48")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let sessionFile = projectDir.appendingPathComponent("48.jsonl")
+        try assistantLine(model: "claude-opus-4-8", input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        let expected = (1000.0 * 5.0 + 500.0 * 25.0) / 1_000_000.0
+        XCTAssertEqual(snapshot.activeSessions.first?.totalCost ?? 0, expected, accuracy: 1e-9)
+    }
+
+    func testFable5UsesFablePricing() throws {
+        let now = Date()
+        let ts = ISO8601DateFormatter().string(from: now)
+        let projectDir = fixtureRootURL.appendingPathComponent("fable5")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let sessionFile = projectDir.appendingPathComponent("fable.jsonl")
+        try assistantLine(model: "claude-fable-5", input: 1000, output: 500, cacheCreation: 400, cacheRead: 1000, timestamp: ts)
+            .write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        let expected = (1000.0 * 10.0 + 500.0 * 50.0 + 400.0 * 12.50 + 1000.0 * 1.00) / 1_000_000.0
+        XCTAssertEqual(snapshot.activeSessions.first?.totalCost ?? 0, expected, accuracy: 1e-9)
+    }
+
+    func testSonnet5UsesSonnetPricing() throws {
+        let now = Date()
+        let ts = ISO8601DateFormatter().string(from: now)
+        let projectDir = fixtureRootURL.appendingPathComponent("sonnet5")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let sessionFile = projectDir.appendingPathComponent("s5.jsonl")
+        try assistantLine(model: "claude-sonnet-5", input: 1000, output: 500, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        let expected = (1000.0 * 3.0 + 500.0 * 15.0) / 1_000_000.0
+        XCTAssertEqual(snapshot.activeSessions.first?.totalCost ?? 0, expected, accuracy: 1e-9)
+    }
+
+    func testDatedHaiku45SnapshotUsesHaiku45Pricing() throws {
+        // Real logs carry the dated id claude-haiku-4-5-20251001 (prefix match).
+        let now = Date()
+        let ts = ISO8601DateFormatter().string(from: now)
+        let projectDir = fixtureRootURL.appendingPathComponent("haiku45-dated")
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let sessionFile = projectDir.appendingPathComponent("h.jsonl")
+        try assistantLine(model: "claude-haiku-4-5-20251001", input: 10_000, output: 5000, cacheCreation: 0, cacheRead: 0, timestamp: ts)
+            .write(to: sessionFile, atomically: true, encoding: .utf8)
+
+        let estimator = SessionCostEstimator(projectsRootURL: fixtureRootURL)
+        let snapshot = estimator.estimateCosts(now: now)
+
+        let expected = (10_000.0 * 1.0 + 5000.0 * 5.0) / 1_000_000.0
+        XCTAssertEqual(snapshot.activeSessions.first?.totalCost ?? 0, expected, accuracy: 1e-9)
+    }
+
     func testRepeatedEstimateCostsStableForSameFiles() throws {
         let now = Date()
         let ts = ISO8601DateFormatter().string(from: now)

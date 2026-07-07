@@ -51,16 +51,29 @@ struct CostSnapshot: Sendable {
 
 @MainActor
 final class SessionCostEstimator {
-    /// Opus 4.5 / 4.6 / 4.7 — Anthropic standard API (5m cache write / cache hit columns).
-    private static let opusCheapPricing = ModelPricing(
+    // Rates are per 1M tokens, Anthropic standard API. Cache-write is the 5-minute
+    // TTL rate (1.25x input); cache-read is 0.1x input.
+    // Source: https://claude.com/pricing (verified 2026-07).
+
+    /// Fable 5 — most capable widely released model ($10 in / $50 out).
+    /// Also covers Mythos 5, which shares Fable 5's pricing.
+    private static let fablePricing = ModelPricing(
+        inputPerMillion: 10.0, outputPerMillion: 50.0,
+        cacheCreationPerMillion: 12.50, cacheReadPerMillion: 1.00
+    )
+    /// Opus 4.5 / 4.6 / 4.7 / 4.8 — current Opus tier ($5 in / $25 out).
+    private static let opusCurrentPricing = ModelPricing(
         inputPerMillion: 5.0, outputPerMillion: 25.0,
         cacheCreationPerMillion: 6.25, cacheReadPerMillion: 0.50
     )
-    /// Opus 4, 4.1, Opus 3 (legacy table).
+    /// Opus 4, 4.1, Opus 3 (legacy $15 in / $75 out).
     private static let opusLegacyPricing = ModelPricing(
         inputPerMillion: 15.0, outputPerMillion: 75.0,
         cacheCreationPerMillion: 18.75, cacheReadPerMillion: 1.50
     )
+    /// Sonnet 4.x / Sonnet 5 ($3 in / $15 out). Sonnet 5 carries a reduced
+    /// intro rate ($2 / $10) through 2026-08-31; standard rates are used here to
+    /// stay aligned with JSONL cost parsers (ccusage) and permanent pricing.
     private static let sonnetPricing = ModelPricing(
         inputPerMillion: 3.0, outputPerMillion: 15.0,
         cacheCreationPerMillion: 3.75, cacheReadPerMillion: 0.30
@@ -75,11 +88,15 @@ final class SessionCostEstimator {
     )
 
     private static let pricing: [String: ModelPricing] = [
-        "claude-opus-4-7": opusCheapPricing,
-        "claude-opus-4-6": opusCheapPricing,
-        "claude-opus-4-5": opusCheapPricing,
+        "claude-fable-5": fablePricing,
+        "claude-mythos-5": fablePricing,
+        "claude-opus-4-8": opusCurrentPricing,
+        "claude-opus-4-7": opusCurrentPricing,
+        "claude-opus-4-6": opusCurrentPricing,
+        "claude-opus-4-5": opusCurrentPricing,
         "claude-opus-4-1": opusLegacyPricing,
         "claude-opus-4-20250514": opusLegacyPricing,
+        "claude-sonnet-5": sonnetPricing,
         "claude-sonnet-4-6": sonnetPricing,
         "claude-sonnet-4-5": sonnetPricing,
         "claude-haiku-4-5": haiku45Pricing,
@@ -323,27 +340,27 @@ final class SessionCostEstimator {
 
         let m = model.lowercased()
 
+        if m.contains("fable") || m.contains("mythos") {
+            return fablePricing
+        }
+
         if m.contains("opus") {
-            if m.contains("4-7") || m.contains("4.7")
-                || m.contains("4-6") || m.contains("4.6")
-                || m.contains("4-5") || m.contains("4.5") {
-                return opusCheapPricing
-            }
-            if m.contains("4-1") || m.contains("4.1") {
-                return opusLegacyPricing
-            }
-            // e.g. claude-opus-4-20250514 (Opus 4) — not 4.5+
-            if m.contains("opus-4"), !m.contains("4-5"), !m.contains("4.5"),
-               !m.contains("4-6"), !m.contains("4.6"),
-               !m.contains("4-7"), !m.contains("4.7") {
-                return opusLegacyPricing
-            }
-            return opusLegacyPricing
+            // Legacy $15/$75 tier is only Opus 3, Opus 4, and Opus 4.1. Everything
+            // from Opus 4.5 onward (4.5/4.6/4.7/4.8 and any future release) is the
+            // current $5/$25 tier, so default unknown Opus IDs to current pricing.
+            let isLegacy = m.contains("opus-4-1") || m.contains("opus-4.1")
+                || m.contains("opus-4-0") || m.contains("opus-4.0")
+                || m.contains("opus-4-2025")            // dated Opus 4 snapshot
+                || m.contains("opus-3") || m.contains("3-opus")
+            return isLegacy ? opusLegacyPricing : opusCurrentPricing
         }
 
         if m.contains("haiku") {
-            if m.contains("4-5") || m.contains("4.5") { return haiku45Pricing }
-            return haiku35Pricing
+            // Only Haiku 3 / 3.5 use the older tier; default newer Haiku to 4.5.
+            if m.contains("haiku-3") || m.contains("3-5") || m.contains("3.5") {
+                return haiku35Pricing
+            }
+            return haiku45Pricing
         }
 
         if m.contains("sonnet") { return sonnetPricing }
