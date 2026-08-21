@@ -3,7 +3,7 @@
 
 **Problem:** You start a Claude Code task or an army of Claude Code agents, then you realize you need to step away. You can't close your Mac laptop because it would stop Claude from running. You have 2 bad options - do you walk around with your laptop open or do you stop Claude?
 
-**Solution:** Claude Caffeine is a lightweight menu bar app that keeps your Mac awake *only* while Claude Code is working — including with the **lid closed**. The moment Claude goes idle, normal sleep resumes. No config, no account, runs entirely locally.
+**Solution:** Claude Caffeine is a lightweight menu bar app that keeps your Mac awake *only* while Claude Code or a local Cursor agent is working — including with the **lid closed**. The moment they go idle, normal sleep resumes. No config, no account, runs entirely locally.
 
 ![App icon](assets/claude-caffeine.png)
 ---
@@ -60,12 +60,13 @@ open /Applications/Claude\ Caffeine.app
 
 ## How it works
 
-The app monitors Claude Code activity using **native hooks**. 
+The app monitors **Claude Code** and **local Cursor agents** using native hooks.
 
-1. **Hooks** — Claude Code is configured to trigger scripts on session events (UserPromptSubmit, PreToolUse, Stop, etc.). These scripts manage session files under `~/.claude/caffeine_sessions/`.
-2. **Heartbeat** — To handle manual interrupts (like pressing Escape) or crashes, the app uses a 5-minute heartbeat timeout and PID liveness checks.
+1. **Claude Code hooks** — Claude Code is configured to trigger scripts on session events (UserPromptSubmit, PreToolUse, Stop, etc.). These scripts manage session files under `~/.claude/caffeine_sessions/`.
+2. **Cursor hooks** — User-level hooks in `~/.cursor/hooks.json` fire on Agent Chat / Cmd+K events (`beforeSubmitPrompt`, `preToolUse`, `stop`, `sessionEnd`, and related heartbeats). These scripts manage session files under `~/.cursor/caffeine_sessions/`. Cursor **cloud agents** are not covered: they already run off-machine, and user-level hooks do not load there.
+3. **Heartbeat** — To handle manual interrupts (like pressing Escape) or crashes, the app uses a 5-minute heartbeat timeout and PID liveness checks.
 
-If any valid session is active, the Mac stays awake. When sessions time out or end, the sleep lock is released.
+If any valid Claude Code or Cursor session is active, the Mac stays awake. When sessions time out or end, the sleep lock is released. Tab completions do not count as agent activity.
 
 ---
 
@@ -126,9 +127,9 @@ The menu shows a countdown while idle. Low-battery protection still applies rega
 
 | Icon | Meaning |
 |------|--------|
-| Animated bolt | Claude is working — Mac is being kept awake |
+| Animated bolt | Claude Code or a Cursor agent is working — Mac is being kept awake |
 | Padlock on laptop | Closed-lid mode on, waiting for activity |
-| Moon with zzz | Idle — no active Claude Code sessions |
+| Moon with zzz | Idle — no active Claude Code or Cursor sessions |
 | Warning triangle | Scan issue — lock held during grace period |
 
 The menu shows live status: process state, active sessions, closed-lid state, today/week cost (if enabled), and last check time.

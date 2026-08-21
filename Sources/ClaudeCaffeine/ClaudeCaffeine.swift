@@ -177,6 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             logger.error("Failed to install activity hooks: \(error.localizedDescription)")
         }
+        do {
+            try CursorHookInstaller.install()
+        } catch {
+            logger.error("Failed to install Cursor activity hooks: \(error.localizedDescription)")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -614,10 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hasWarning = false
         var statusText: String
 
-        var processText = isActivelyWorking ? "Claude Activity: Active" : "Claude Activity: Idle"
-        if isActivelyWorking && snapshot.sessionCount > 0 {
-            processText += " (\(snapshot.sessionCount) Sessions)"
-        }
+        let processText = snapshot.activityLine
         let sessionsText = snapshot.lastActivityDate != nil ? "Last Active: \(DateFormatter.localizedString(from: snapshot.lastActivityDate!, dateStyle: .none, timeStyle: .medium))" : "No recent activity"
 
         #if DEBUG
@@ -644,7 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastSuccessfulPollAt = now
         if shouldKeepAwake {
             sleepAssertion.holdIfNeeded(reason: isActivelyWorking
-                ? "Keeping Mac awake while Claude Code is actively working"
+                ? snapshot.sleepAssertionReason
                 : "Keeping Mac awake after idle (keep-awake timer)")
         } else {
             sleepAssertion.releaseAll()

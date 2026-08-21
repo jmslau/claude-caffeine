@@ -12,7 +12,9 @@ ClaudeCaffeine is a macOS menu bar app (Swift 6.2, Swift Package Manager) that p
 ```
 ClaudeCaffeine.swift          Entry point + AppDelegate (menu bar UI, poll loop, state machine)
     |
-    +-- ClaudeHookMonitor          Scans ~/.claude/caffeine_sessions/ for active session files
+    +-- ClaudeHookMonitor          Scans ~/.claude/caffeine_sessions/ and ~/.cursor/caffeine_sessions/
+    |
+    +-- CursorHookInstaller        Installs user-level Cursor agent hooks (~/.cursor/hooks.json)
     |
     +-- SleepAssertionManager      Holds/releases IOKit power assertions (idle sleep + display sleep)
     |
@@ -33,9 +35,11 @@ The app uses a reactive, session-aware approach:
 
 1. **Claude Code Hooks**: Claude Code is configured to trigger `active.js` and `idle.js` scripts on specific events (`UserPromptSubmit`, `PreToolUse`, `Stop`, `Elicitation`, etc.). These scripts manage session-specific state files in `~/.claude/caffeine_sessions/`.
 
-2. **Session Monitoring**: `ClaudeHookMonitor` polls the `caffeine_sessions` directory every 5 seconds. If any session files exist, the Mac is kept awake. This supports multiple concurrent terminal sessions and avoids race conditions by using individual files per `session_id`.
+2. **Cursor Hooks**: User-level hooks in `~/.cursor/hooks.json` fire on Agent Chat / Cmd+K events and write session files to `~/.cursor/caffeine_sessions/`. Cloud agents are not detected (they run off-machine).
 
-3. **Auto-Resume Wrapper**: An experimental Python wrapper tracks "hit your limit" messages and maintains its own session file while waiting for a reset, ensuring the Mac stays awake specifically during the wait timer.
+3. **Session Monitoring**: `ClaudeHookMonitor` polls both `caffeine_sessions` directories every 5 seconds. If any session files exist, the Mac is kept awake. This supports multiple concurrent sessions and avoids race conditions by using individual files per `session_id` / `conversation_id`.
+
+4. **Auto-Resume Wrapper**: An experimental Python wrapper tracks "hit your limit" messages and maintains its own session file while waiting for a reset, ensuring the Mac stays awake specifically during the wait timer.
 
 ## Key Design Decisions
 
@@ -50,8 +54,9 @@ The app uses a reactive, session-aware approach:
 | File | Lines | Role |
 |------|-------|------|
 | `ClaudeCaffeine.swift` | ~1050 | App entry point, `AppDelegate`, menu bar UI, poll loop, state transitions |
-| `ClaudeHookMonitor.swift` | ~50 | Scans `~/.claude/caffeine_sessions/` for active sessions based on hook files |
-| `HookInstaller.swift` | ~120 | Installs/uninstalls Node.js hook helpers and updates `settings.json` |
+| `ClaudeHookMonitor.swift` | ~50 | Scans `~/.claude/caffeine_sessions/` and `~/.cursor/caffeine_sessions/` for active session files |
+| `HookInstaller.swift` | ~120 | Installs/uninstalls Node.js hook helpers and updates Claude Code `settings.json` |
+| `CursorHookInstaller.swift` | ~180 | Installs/uninstalls user-level Cursor hooks in `~/.cursor/hooks.json` |
 | `SleepAssertionManager.swift` | ~70 | Creates/releases `IOPMAssertion` for system and display sleep prevention |
 | `ClosedDisplayManager.swift` | ~120 | State machine for `pmset disablesleep` toggling via privileged helper |
 | `HelperInstaller.swift` | ~155 | Installs/uninstalls the sudoers entry and shell script for closed-lid mode |
@@ -66,6 +71,8 @@ The app uses a reactive, session-aware approach:
 | `BatteryMonitorTests.swift` | Battery level reading, low-battery threshold logic |
 | `ClosedDisplayManagerTests.swift` | Enable/disable state machine, helper-not-installed guard, force disable |
 | `HelperInstallerTests.swift` | Script writing, sudoers validation, install/uninstall flows |
+| `CursorHookInstallerTests.swift` | Cursor hooks.json merge, idempotent install, uninstall preserves other hooks |
+| `ClaudeHookMonitorTests.swift` | Claude + Cursor session OR, stale/dead-PID cleanup, activity menu copy |
 
 ## How to Work on This Project
 
