@@ -1,7 +1,7 @@
 # Claude Caffeine 
 ![Claude Caffeine](assets/icon-small.png)
 
-**Problem:** You start a Claude Code task or an army of Claude Code agents, then you realize you need to step away. You can't close your Mac laptop because it would stop Claude from running. You have 2 bad options - do you walk around with your laptop open or do you stop Claude?
+**Problem:** You start a Claude Code task or a Cursor agent, then you realize you need to step away. You can't close your Mac laptop because sleep would stop the work. You have 2 bad options — walk around with the lid open, or stop the agent.
 
 **Solution:** Claude Caffeine is a lightweight menu bar app that keeps your Mac awake *only* while Claude Code or a local Cursor agent is working — including with the **lid closed**. The moment they go idle, normal sleep resumes. No config, no account, runs entirely locally.
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| **Close the lid, keep Claude running** | Close your MacBook and walk away. Claude keeps working. When Claude goes idle, your Mac will go to sleep. When you open the lid, a popover shows how long it ran while closed. |
-| **See your API spend at a glance** | Menu bar shows cost today and this week; submenu breaks it down by project. For **API users only** (pay-per-token); estimates use Anthropic’s published rates. |
+| **Close the lid, keep agents running** | Close your MacBook and walk away. Claude Code and local Cursor agents keep working. When they go idle, your Mac will go to sleep. When you open the lid, a popover shows how long it ran while closed. |
+| **See your API spend at a glance** | Menu bar shows cost today and this week; submenu breaks it down by project. For **Claude Code API users only** (pay-per-token); estimates use Anthropic’s published rates. |
 
-Plus: task-completion notifications with sound, configurable keep-awake timer for Claude Remote sessions, low-battery protection, and clean shutdown so sleep always restores on quit.
+Plus: task-completion notifications with sound, configurable keep-awake timer after idle, low-battery protection, and clean shutdown so sleep always restores on quit.
 
 ---
 
@@ -70,9 +70,24 @@ If any valid Claude Code or Cursor session is active, the Mac stays awake. When 
 
 ---
 
+## Cursor support
+
+Local Cursor agents keep the Mac awake the same way Claude Code does. On first launch, Claude Caffeine installs user-level hooks in `~/.cursor/hooks.json` (existing hooks are preserved) and writes session files under `~/.cursor/caffeine_sessions/`. Hook scripts use Node.js.
+
+| Covered | Not covered |
+|---|---|
+| Agent Chat, Cmd+K, and local background agents | **Cloud agents** — they already run on Cursor’s VMs, so sleeping the Mac does not stop them |
+| Multiple concurrent local agents | **Tab completions** — inline autocomplete is not treated as an agent |
+
+The menu shows combined status, for example `Activity: Active (Claude 2, Cursor 1)`.
+
+Cursor already holds an idle wake lock during an agent loop, but it cannot prevent lid-close sleep. Closed-lid mode is the part Claude Caffeine adds.
+
+---
+
 ## Closed-lid mode
 
-The standout feature: your MacBook stays awake with the lid shut while Claude is working. When you open the lid, you get a clear summary of how long Claude ran while it was closed.
+The standout feature: your MacBook stays awake with the lid shut while Claude Code or a local Cursor agent is working. When you open the lid, you get a clear summary of how long it ran while closed.
 
 ![Open-lid summary popover](assets/open-lid-notification.png)
 
@@ -108,16 +123,16 @@ You can hide the cost meter from the menu: **Show Cost Meter** toggle.
 
 ## Keep Awake After Idle
 
-By default, your Mac sleeps as soon as Claude goes idle. If you're using **Claude Remote** (controlling Claude Code from your phone), you may want the Mac to stay awake longer — or indefinitely.
+By default, your Mac sleeps as soon as Claude Code and Cursor go idle. If you're using **Claude Remote** (controlling Claude Code from your phone) or waiting on a long local Cursor run, you may want the Mac to stay awake longer — or indefinitely.
 
 From the menu, choose **Keep Awake After Idle** and pick a duration:
 
 | Option | Use case |
 |--------|----------|
-| **Off** (default) | Mac sleeps when Claude goes idle |
+| **Off** (default) | Mac sleeps when Claude Code and Cursor go idle |
 | **1–4 Hours** | Lid closed in your backpack; saves battery |
 | **12 Hours** | Overnight unattended session |
-| **Forever** | Plugged in at home, using Claude Remote all day |
+| **Forever** | Plugged in at home, using Claude Remote or leaving local agents ready all day |
 
 The menu shows a countdown while idle. Low-battery protection still applies regardless of the setting.
 
@@ -132,13 +147,13 @@ The menu shows a countdown while idle. Low-battery protection still applies rega
 | Moon with zzz | Idle — no active Claude Code or Cursor sessions |
 | Warning triangle | Scan issue — lock held during grace period |
 
-The menu shows live status: process state, active sessions, closed-lid state, today/week cost (if enabled), and last check time.
+The menu shows live status: Claude and Cursor activity counts, closed-lid state, today/week cost (if enabled), and last check time.
 
 ---
 
 ## Configuration
 
-- **Keep Awake After Idle** — How long to hold the sleep lock after Claude goes idle (Off, 1h, 2h, 4h, 12h, Forever).
+- **Keep Awake After Idle** — How long to hold the sleep lock after Claude Code and Cursor go idle (Off, 1h, 2h, 4h, 12h, Forever).
 - **Show Cost Meter** — Show or hide the cost display in the menu bar (on by default).
 - **Notifications** — Toggle completion notifications and sound separately.
 
@@ -161,6 +176,10 @@ Release build and cask update:
 ---
 
 ## Changelog
+
+### Unreleased
+
+- **Cursor agent support** — Local Cursor Agent Chat, Cmd+K, and background agents keep the Mac awake (including closed-lid). Cloud agents and Tab completions are not covered.
 
 ### v1.3.5
 
@@ -240,6 +259,14 @@ If you installed the closed-lid helper, remove it first via **Closed-Lid Mode �
 sudo rm /private/etc/sudoers.d/claude_caffeine
 rm -rf ~/Library/ClaudeCaffeine
 ```
+
+To remove the Cursor hooks Claude Caffeine added (this does not delete other entries in `hooks.json`):
+
+```bash
+rm -rf ~/.cursor/caffeine-hooks ~/.cursor/caffeine_sessions
+```
+
+Then delete any `caffeine-hooks` commands from `~/.cursor/hooks.json`.
 
 ---
 
