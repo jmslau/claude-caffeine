@@ -34,22 +34,72 @@ try {
 } catch (e) {}
 """
 
-    private static let idleJS = """
+    // Raw string: the regex backslashes must reach the script unchanged.
+    static let idleJS = #"""
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const sessionsDir = path.join(os.homedir(), '.claude/caffeine_sessions');
+// Claude Code's usage-limit message, e.g. "You've hit your session limit · resets 3:30pm (Europe/London)".
+const LIMIT_RE = /you['’]ve\s+hit\s+your\s+[^·∙•]{0,40}?limit\s*[·∙•]\s*resets\s+(1[0-2]|[1-9])(?::([0-5]\d))?\s*(am|pm)\b/i;
+// Claude Code continues on its own 30-90s after the reset (a server-tuned delay); stay awake well past that.
+const HOLD_GRACE_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+// Events that do not end a turn; they must not end a running limit hold.
+const KEEPS_HOLD = ['Notification', 'SubagentStop', 'Elicitation'];
+// Background work that is Claude itself working (Claude Code's labels for local agent tasks).
+const AGENT_TASK_TYPES = ['subagent', 'workflow', 'teammate'];
+
+// When a usage limit ended the turn, returns when Auto-Resume should stop keeping the Mac awake.
+function limitHoldUntil(input, now) {
+    if (input.hook_event_name !== 'StopFailure' || input.error !== 'rate_limit') return null;
+    const match = LIMIT_RE.exec(input.last_assistant_message || '');
+    if (!match) return null;
+    const reset = new Date(now);
+    reset.setHours(Number(match[1]) % 12 + (match[3].toLowerCase() === 'pm' ? 12 : 0), Number(match[2] || 0), 0, 0);
+    if (reset.getTime() <= now) {
+        // Claude Code shows a bare time only for resets less than a day away: a time within the last hour
+        // means the reset is due now, anything earlier means tomorrow.
+        if (now - reset.getTime() < HOUR_MS) return now + HOLD_GRACE_MS;
+        reset.setDate(reset.getDate() + 1);
+    }
+    return reset.getTime() + HOLD_GRACE_MS;
+}
+
+function isHolding(sessionFile, now) {
+    try { return JSON.parse(fs.readFileSync(sessionFile, 'utf8')).holdUntil > now; } catch (e) { return false; }
+}
+
+// Subagent hooks carry the parent's session_id, so a finished subagent does not end the session, and a turn
+// that ends while background agents run leaves the session paused, not done (see Stop's background_tasks).
+function isStillWorking(input) {
+    if (input.hook_event_name === 'SubagentStop') return true;
+    return input.hook_event_name === 'Stop'
+        && (input.background_tasks || []).some((task) => AGENT_TASK_TYPES.includes(task.type));
+}
+
 try {
     const input = JSON.parse(fs.readFileSync(0, 'utf8'));
     const sessionId = input.session_id;
     if (sessionId) {
         const sessionFile = path.join(sessionsDir, sessionId);
-        if (fs.existsSync(sessionFile)) {
+        const now = Date.now();
+        const holdUntil = limitHoldUntil(input, now);
+        if (holdUntil) {
+            // The app honors holdUntil only while Auto-Resume is enabled; otherwise it treats this as idle.
+            fs.mkdirSync(sessionsDir, { recursive: true });
+            fs.writeFileSync(sessionFile, JSON.stringify({ timestamp: now, pid: process.ppid, holdUntil }));
+        } else if (KEEPS_HOLD.includes(input.hook_event_name) && isHolding(sessionFile, now)) {
+            // e.g. "Claude is waiting for your input" while the session sits at the limit: keep holding.
+        } else if (isStillWorking(input)) {
+            fs.mkdirSync(sessionsDir, { recursive: true });
+            fs.writeFileSync(sessionFile, JSON.stringify({ timestamp: now, pid: process.ppid }));
+        } else if (fs.existsSync(sessionFile)) {
             try { fs.unlinkSync(sessionFile); } catch (e) {}
         }
     }
 } catch (e) {}
-"""
+"""#
 
     static var settingsURL: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")

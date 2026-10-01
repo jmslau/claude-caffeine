@@ -177,6 +177,11 @@ Release build and cask update:
 
 ## Changelog
 
+### Unreleased
+
+- **No more "finished working" while Claude still works** — Claude Code sends subagent hooks with the parent's session id, so every finished subagent (`SubagentStop`) ended the whole session, and a turn that ended while background agents kept running ("Waiting for 1 background agent to finish") counted as done. Both fired a premature completion notification and could let the Mac sleep mid-task. Now a finished subagent keeps the session active, and so does a `Stop` whose `background_tasks` still lists agent work; background shells such as dev servers do not.
+- **Auto-Resume works again, without a shell wrapper** — Since v1.3.3 Auto-Resume never did anything: the Python wrapper's limit regex was double-escaped and never matched. It now uses Claude Code's `StopFailure` hook: when a usage limit ends a turn ("You've hit your session limit · resets 3pm"), Claude Caffeine keeps the Mac awake, including closed-lid, until shortly after the reset. That is what the interactive Claude Code CLI needs to continue on its own: choose "Wait here, then continue automatically" when the limit is reached (or run `/rate-limit-options`) if it isn't already set to. The hold also applies to sessions in the desktop app and IDEs, which don't continue by themselves. It ignores the 70%+ usage warnings and never types into your session. The `claude` alias is removed from your shell profile on launch, and the old wrapper becomes a pass-through for terminals that are still open.
+
 ### v1.3.6
 
 - **Updated pricing for Sonnet 5, Opus 5, Opus 4.8, and Fable 5** — Sonnet 5 now uses Anthropic’s permanent \$2 / \$10 per MTok rate (5m cache write \$2.50, cache hit \$0.20), not the Sonnet 4.x \$3 / \$15 tier. Opus 5 and Opus 4.8 stay on the current Opus \$5 / \$25 tier; Fable 5 stays at \$10 / \$50.

@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             logger.error("Failed to install Cursor activity hooks: \(error.localizedDescription)")
         }
+        AutoResumeManager.shared.removeLegacyWrapper()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -304,28 +305,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !isEnabled {
             let alert = NSAlert()
             alert.messageText = "Enable Auto-Resume (Experimental)?"
-            alert.informativeText = "This feature will automatically resume Claude Code overnight when usage limits reset. To achieve this without altering how you start Claude, it will add a 'claude' Python wrapper alias to your shell profile (~/.zshrc).\\n\\nNote: You will need to open a new terminal window for it to take effect."
+            alert.informativeText = "When a usage limit stops Claude Code, Claude Caffeine keeps your Mac awake until the limit resets, so the Claude Code CLI can continue on its own.\n\nIf it isn't already set to continue automatically, choose \"Wait here, then continue automatically\" when the limit is reached (or run /rate-limit-options)."
             alert.addButton(withTitle: "Enable")
             alert.addButton(withTitle: "Cancel")
             alert.alertStyle = .warning
 
             let response = alert.runModal()
             if response == .alertFirstButtonReturn {
-                do {
-                    try AutoResumeManager.shared.enable()
-                } catch {
-                    showAlert(title: "Failed to Enable Auto-Resume", message: error.localizedDescription)
-                }
+                AutoResumeManager.shared.enable()
             }
         } else {
-            do {
-                try AutoResumeManager.shared.disable()
-                showAlert(title: "Auto-Resume Disabled", message: "The wrapper alias has been removed from your shell profiles. Please restart any active terminal sessions.")
-            } catch {
-                showAlert(title: "Failed to Disable Auto-Resume", message: error.localizedDescription)
-            }
+            AutoResumeManager.shared.disable()
+            showAlert(title: "Auto-Resume Disabled", message: "Claude Caffeine will no longer keep your Mac awake after Claude Code hits a usage limit.")
         }
         updateAutoResumeMenu()
+        refresh()
     }
 
     // MARK: - Menu
@@ -592,12 +586,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isPollInFlight = true
         let hookMonitor = self.hookMonitor
         let idleThreshold = self.idleThreshold
+        let honorLimitHolds = AutoResumeManager.shared.isEnabled
         
         pollTask = Task.detached(priority: .utility) { [hookMonitor, weak self] in
             let pollDate = Date()
             
             // Poll session-aware hooks
-            let hookSnapshot = await hookMonitor.poll(now: pollDate, idleThreshold: idleThreshold)
+            let hookSnapshot = await hookMonitor.poll(now: pollDate, idleThreshold: idleThreshold, honorLimitHolds: honorLimitHolds)
             
             await MainActor.run { [weak self] in
                 self?.applyPoll(snapshot: hookSnapshot, now: pollDate)
@@ -641,13 +636,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let thermalCritical = thermalMonitor.isCritical
-        let shouldKeepAwake = !thermalCritical && (isActivelyWorking || shouldKeepAwakeWhileIdle(now: now))
+        // Auto-Resume: a usage limit stopped Claude Code; stay awake until it resets so Claude can continue.
+        let isHoldingForLimitReset = snapshot.limitHoldCount > 0
+        let shouldKeepAwake = !thermalCritical
+            && (isActivelyWorking || isHoldingForLimitReset || shouldKeepAwakeWhileIdle(now: now))
 
         lastSuccessfulPollAt = now
         if shouldKeepAwake {
             sleepAssertion.holdIfNeeded(reason: isActivelyWorking
                 ? snapshot.sleepAssertionReason
-                : "Keeping Mac awake after idle (keep-awake timer)")
+                : isHoldingForLimitReset
+                    ? "Keeping Mac awake until the Claude Code usage limit resets"
+                    : "Keeping Mac awake after idle (keep-awake timer)")
         } else {
             sleepAssertion.releaseAll()
         }
@@ -661,6 +661,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastCheckLineItem.title = "Last check: \(DateFormatter.localizedString(from: now, dateStyle: .none, timeStyle: .medium))"
         updateClosedLidMenu()
         updateKeepAwakeMenu()
+        if isHoldingForLimitReset {
+            keepAwakeStatusItem.isHidden = true
+        }
         updateCostDisplay()
         let todayCost = lastCostSnapshot?.todayCost ?? 0
         menuBarAnimator.update(isActive: isActivelyWorking, todayCost: todayCost)

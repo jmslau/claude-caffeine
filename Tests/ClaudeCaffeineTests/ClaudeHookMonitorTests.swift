@@ -90,19 +90,52 @@ final class ClaudeHookMonitorTests: XCTestCase {
         )
     }
 
-    private func poll() async -> ClaudeHookMonitor.PollSnapshot {
+    func testLimitHoldKeepsSessionWithoutCountingAsWork() async throws {
+        try writeSession(in: claudeDir, id: "limited", timestamp: Date().addingTimeInterval(-400), pid: getpid(), holdUntil: Date().addingTimeInterval(3600))
+        let snapshot = await poll(honorLimitHolds: true)
+        XCTAssertFalse(snapshot.isActivelyWorking)
+        XCTAssertEqual(snapshot.limitHoldCount, 1)
+        XCTAssertEqual(snapshot.claudeSessionCount, 0)
+        XCTAssertEqual(snapshot.activityLine, "Activity: Waiting for usage limit reset")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: claudeDir.appendingPathComponent("limited").path))
+    }
+
+    func testLimitHoldIsDroppedWhenAutoResumeIsOff() async throws {
+        try writeSession(in: claudeDir, id: "limited", timestamp: Date(), pid: getpid(), holdUntil: Date().addingTimeInterval(3600))
+        let snapshot = await poll(honorLimitHolds: false)
+        XCTAssertFalse(snapshot.isActivelyWorking)
+        XCTAssertEqual(snapshot.limitHoldCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: claudeDir.appendingPathComponent("limited").path))
+    }
+
+    func testExpiredOrphanedOrUnboundedLimitHoldIsRemoved() async throws {
+        try writeSession(in: claudeDir, id: "expired", timestamp: Date(), pid: getpid(), holdUntil: Date().addingTimeInterval(-1))
+        try writeSession(in: claudeDir, id: "exited", timestamp: Date(), pid: 1_999_999_999, holdUntil: Date().addingTimeInterval(3600))
+        try writeSession(in: claudeDir, id: "unbounded", timestamp: Date(), pid: getpid(), holdUntil: Date().addingTimeInterval(48 * 3600))
+        let snapshot = await poll(honorLimitHolds: true)
+        XCTAssertEqual(snapshot.limitHoldCount, 0)
+        XCTAssertEqual(snapshot.activityLine, "Activity: Idle")
+        for id in ["expired", "exited", "unbounded"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: claudeDir.appendingPathComponent(id).path), id)
+        }
+    }
+
+    private func poll(honorLimitHolds: Bool = false) async -> ClaudeHookMonitor.PollSnapshot {
         let monitor = ClaudeHookMonitor(
             claudeSessionsDir: claudeDir,
             cursorSessionsDir: cursorDir
         )
-        return await monitor.poll(now: Date(), idleThreshold: 60)
+        return await monitor.poll(now: Date(), idleThreshold: 60, honorLimitHolds: honorLimitHolds)
     }
 
-    private func writeSession(in directory: URL, id: String, timestamp: Date, pid: pid_t) throws {
-        let payload: [String: Any] = [
+    private func writeSession(in directory: URL, id: String, timestamp: Date, pid: pid_t, holdUntil: Date? = nil) throws {
+        var payload: [String: Any] = [
             "timestamp": timestamp.timeIntervalSince1970 * 1000,
             "pid": Int(pid),
         ]
+        if let holdUntil {
+            payload["holdUntil"] = holdUntil.timeIntervalSince1970 * 1000
+        }
         let data = try JSONSerialization.data(withJSONObject: payload)
         try data.write(to: directory.appendingPathComponent(id))
     }
